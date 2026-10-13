@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load extension preferences
   const settings = await chrome.storage.local.get(['enabled', 'backendUrl']);
-  const effectiveBackendUrl = settings.backendUrl || 'http://localhost:3001';
+  const effectiveBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
   toggleEnabled.checked = settings.enabled !== false;
 
   // Initial loads

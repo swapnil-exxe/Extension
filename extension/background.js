@@ -165,7 +165,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * Proxy question payload to Express backend
  */
 async function handleAnalyzeQuestion(payload) {
-  const { backendUrl = 'http://localhost:3001' } = await chrome.storage.local.get(['backendUrl']);
+  const { backendUrl = 'https://extension-w1ac.onrender.com' } = await chrome.storage.local.get(['backendUrl']);
   const cleanUrl = backendUrl.replace(/\/+$/, '');
   const targetEndpoint = `${cleanUrl}/api/answer`;
 
@@ -207,7 +207,7 @@ async function handleAnalyzeQuestion(payload) {
  * Health check helper
  */
 async function handleHealthCheck(url) {
-  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'http://localhost:3001';
+  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = effectiveUrl.replace(/\/+$/, '');
   const start = Date.now();
 
@@ -237,7 +237,7 @@ async function handleHealthCheck(url) {
  * Clear backend cache
  */
 async function handleClearCache(url) {
-  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'http://localhost:3001';
+  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = effectiveUrl.replace(/\/+$/, '');
 
   const res = await fetch(`${cleanUrl}/api/cache/clear`, { method: 'POST' });
@@ -249,7 +249,7 @@ async function handleClearCache(url) {
  * Retrieve auth and connection status for ChatGPT and Gemini
  */
 async function handleAuthStatus(url) {
-  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'http://localhost:3001';
+  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = effectiveUrl.replace(/\/+$/, '');
 
   const res = await fetch(`${cleanUrl}/api/auth/status`);
@@ -263,7 +263,7 @@ async function handleAuthStatus(url) {
  * Start official OAuth authorization flow and launch provider sign-in tab
  */
 async function handleAuthStart(provider, url) {
-  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'http://localhost:3001';
+  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = effectiveUrl.replace(/\/+$/, '');
 
   const res = await fetch(`${cleanUrl}/api/auth/start`, {
@@ -292,7 +292,7 @@ async function handleAuthStart(provider, url) {
  * Disconnect an AI provider
  */
 async function handleAuthDisconnect(provider, url) {
-  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'http://localhost:3001';
+  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = effectiveUrl.replace(/\/+$/, '');
 
   const res = await fetch(`${cleanUrl}/api/auth/disconnect`, {
@@ -312,7 +312,7 @@ async function handleAuthDisconnect(provider, url) {
  * Set active AI provider (ChatGPT or Gemini)
  */
 async function handleAuthSelect(provider, url) {
-  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'http://localhost:3001';
+  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = effectiveUrl.replace(/\/+$/, '');
 
   const res = await fetch(`${cleanUrl}/api/auth/select`, {
@@ -332,7 +332,7 @@ async function handleAuthSelect(provider, url) {
  * Save and verify API key directly for ChatGPT or Gemini
  */
 async function handleAuthSaveKey(provider, apiKey, url) {
-  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'http://localhost:3001';
+  const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = effectiveUrl.replace(/\/+$/, '');
 
   const res = await fetch(`${cleanUrl}/api/auth/save-key`, {

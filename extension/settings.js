@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (settings.notificationDuration) {
     selectDuration.value = String(settings.notificationDuration);
   }
-  inputBackendUrl.value = settings.backendUrl || 'http://localhost:3001';
+  inputBackendUrl.value = settings.backendUrl || 'https://extension-w1ac.onrender.com';
 
   // Test connection button
   btnTestConnection.addEventListener('click', () => {
