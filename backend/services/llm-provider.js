@@ -194,12 +194,14 @@ async function callGemini(payload, config = {}) {
   }
 
 
-  const initialModel = config.model || process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite';
+  const initialModel = config.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash';
   const candidateModels = Array.from(new Set([
     initialModel,
-    'gemini-2.0-flash-lite',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash'
+    'gemini-3.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.8-flash',
+    'gemini-flash-latest'
   ]));
 
   const hasImage = Boolean(payload.image);
@@ -279,13 +281,15 @@ async function callGemini(payload, config = {}) {
     } catch (err) {
       lastError = err;
       if (
+        err.message.includes('404') ||
+        err.message.includes('NOT_FOUND') ||
         err.message.includes('429') ||
         err.message.includes('RESOURCE_EXHAUSTED') ||
         err.message.includes('503') ||
         err.message.includes('UNAVAILABLE') ||
         err.message.includes('high demand')
       ) {
-        console.warn(`[LLM Provider] Gemini model ${model} temporarily unavailable or high demand. Trying next model...`);
+        console.warn(`[LLM Provider] Gemini model ${model} unavailable (${err.message.slice(0, 80)}...). Trying next model...`);
         continue;
       }
       throw err;
@@ -1060,7 +1064,7 @@ export async function saveProviderApiKey(provider, apiKey) {
     };
   } else if (norm === 'gemini') {
     try {
-      const testRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${cleanKey}`, {
+      const testRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${cleanKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
