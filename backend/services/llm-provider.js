@@ -14,13 +14,13 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
  */
 const connectedAccounts = {
   chatgpt: {
-    status: 'not_connected', // 'not_connected' | 'connecting' | 'connected' | 'expired' | 'error'
-    accessToken: null,
+    status: process.env.OPENAI_API_KEY ? 'connected' : 'not_connected',
+    accessToken: process.env.OPENAI_API_KEY || null,
     refreshToken: null,
     expiresAt: null,
-    accountEmail: null,
+    accountEmail: process.env.OPENAI_API_KEY ? 'openai@connected' : null,
     error: null,
-    connectedAt: null
+    connectedAt: Date.now()
   },
   gemini: {
     status: process.env.GEMINI_API_KEY ? 'connected' : 'not_connected',
@@ -728,6 +728,27 @@ export async function startAuthorization(provider, options = {}) {
       message: 'Redirect to Google OAuth consent screen'
     };
   } else if (key === 'chatgpt') {
+    // If backend has OpenAI API key configured, connect immediately
+    if (process.env.OPENAI_API_KEY) {
+      connectedAccounts.chatgpt = {
+        status: 'connected',
+        accessToken: process.env.OPENAI_API_KEY,
+        refreshToken: null,
+        expiresAt: null,
+        accountEmail: 'openai@connected',
+        error: null,
+        connectedAt: Date.now()
+      };
+      activeProvider = 'chatgpt';
+      return {
+        success: true,
+        status: 'connected',
+        provider: 'chatgpt',
+        connected: true,
+        message: 'ChatGPT successfully connected'
+      };
+    }
+
     // In production/dev mode, if OpenAI account has 0 credits or missing client ID, inform user
     if (process.env.NODE_ENV !== 'test' && !process.env.OPENAI_CLIENT_ID) {
       connectedAccounts.chatgpt.status = 'error';
