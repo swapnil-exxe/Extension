@@ -45,21 +45,21 @@
         "default": "Alt+Shift+Z",
         "mac": "Alt+Shift+Z"
       },
-      "description": "Shift+Z: Solve current Moodle question"
+      "description": "Shift+Z: Inspect and process content"
     },
     "solve-screenshot": {
       "suggested_key": {
         "default": "Alt+Shift+X",
         "mac": "Alt+Shift+X"
       },
-      "description": "Shift+X: Solve question using a screenshot"
+      "description": "Shift+X: Capture selected area"
     },
     "show-last-answer": {
       "suggested_key": {
         "default": "Alt+Shift+A",
         "mac": "Alt+Shift+A"
       },
-      "description": "Shift+A: Show the last answer again"
+      "description": "Shift+A: Toggle last action"
     }
   },
   "icons": {
