@@ -47,8 +47,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnSolve = document.getElementById('btn-trigger-solve');
   const btnRepeat = document.getElementById('btn-trigger-repeat');
 
-  // Load extension preferences
-  const settings = await chrome.storage.local.get(['enabled', 'backendUrl']);
+  // Token / Coins Counter Elements
+  const usageRemaining = document.getElementById('usage-remaining');
+  const usageBarFill = document.getElementById('usage-bar-fill');
+  const usageStatusDesc = document.getElementById('usage-status-desc');
+  const btnRefillTokens = document.getElementById('btn-refill-tokens');
+
+  // Load extension preferences & tokens
+  const settings = await chrome.storage.local.get([
+    'enabled',
+    'backendUrl',
+    'totalTokens',
+    'usedTokens'
+  ]);
   let effectiveBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
   // If user had old localhost saved in browser storage, auto-migrate to live cloud backend
   if (!settings.backendUrl || settings.backendUrl.includes('localhost') || settings.backendUrl.includes('127.0.0.1')) {
@@ -56,6 +67,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.storage.local.set({ backendUrl: effectiveBackendUrl });
   }
   toggleEnabled.checked = settings.enabled !== false;
+
+  // Render tokens / credit stock
+  function renderTokenQuota(total = 100, used = 0) {
+    const left = Math.max(0, total - used);
+    usageRemaining.textContent = left;
+    const pct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
+    usageBarFill.style.width = `${pct}%`;
+
+    if (pct <= 0) {
+      usageBarFill.style.background = '#ef4444';
+      usageStatusDesc.textContent = '❌ Out of stock! Click Refill Pack.';
+      usageStatusDesc.style.color = '#f87171';
+    } else if (pct <= 20) {
+      usageBarFill.style.background = '#f59e0b';
+      usageStatusDesc.textContent = '⚠️ Low stock: Need new pack soon!';
+      usageStatusDesc.style.color = '#fbbf24';
+    } else {
+      usageBarFill.style.background = 'linear-gradient(90deg, #10b981, #3b82f6)';
+      usageStatusDesc.textContent = '⚡ Pack Status: Active & Stocked';
+      usageStatusDesc.style.color = '#94a3b8';
+    }
+  }
+
+  const initialTotal = settings.totalTokens || 100;
+  const initialUsed = settings.usedTokens || 0;
+  renderTokenQuota(initialTotal, initialUsed);
+
+  // Refill tokens button
+  btnRefillTokens.addEventListener('click', async () => {
+    await chrome.storage.local.set({ totalTokens: 100, usedTokens: 0 });
+    renderTokenQuota(100, 0);
+    usageStatusDesc.textContent = '🎉 Pack refilled to 100 solves!';
+  });
 
   // Initial loads
   await refreshServerHealth(effectiveBackendUrl);

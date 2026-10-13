@@ -190,6 +190,12 @@ async function handleAnalyzeQuestion(payload) {
     }
 
     const data = await response.json();
+
+    // Deduct 1 credit/token upon successful solve
+    const tokenStore = await chrome.storage.local.get(['usedTokens']);
+    const currentUsed = tokenStore.usedTokens || 0;
+    await chrome.storage.local.set({ usedTokens: currentUsed + 1 });
+
     return { success: true, data };
   } catch (error) {
     clearTimeout(timeoutId);
