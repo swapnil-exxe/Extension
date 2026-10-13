@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Moodle AI Quiz Assistant - Complete Test Harness</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #f4f6f9; color: #212529; }
+    
+    /* Moodle Navbar */
+    .moodle-navbar {
+      background: #0f6cbf; /* Classic Moodle Blue */
+      color: white;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .moodle-logo { font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
+    .moodle-course { font-size: 13px; opacity: 0.9; }
+
+    /* Layout */
+    .quiz-container {
+      max-width: 1200px;
+      margin: 24px auto;
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 24px;
+      padding: 0 16px;
+    }
+
+    /* Quiz Header */
+    .quiz-header {
+      background: #ffffff;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+    }
+    .quiz-title { font-size: 20px; font-weight: 700; color: #1e293b; }
+    .quiz-subtitle { font-size: 13px; color: #64748b; margin-top: 4px; }
+
+    /* Instructions callout */
+    .test-guide-card {
+      background: #eef2ff;
+      border-left: 4px solid #4f46e5;
+      padding: 12px 16px;
+      border-radius: 0 6px 6px 0;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: #312e81;
+    }
+
+    /* Moodle Question Container */
+    .que {
+      background: #ffffff;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      margin-bottom: 24px;
+      display: flex;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    .info {
+      width: 140px;
+      background: #f8f9fa;
+      padding: 16px;
+      font-size: 13px;
+      border-right: 1px solid #dee2e6;
+      border-top-left-radius: 6px;
+      border-bottom-left-radius: 6px;
+    }
+    .info .no { font-size: 14px; font-weight: 700; margin-bottom: 8px; color: #334155; }
+    .info .state, .info .grade { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+    .content { padding: 20px; flex: 1; }
+    .qtext { font-size: 15px; margin-bottom: 14px; line-height: 1.5; color: #0f172a; }
+    .prompt { font-size: 12px; color: #64748b; font-style: italic; margin-bottom: 12px; }
+
+    /* Moodle Answers */
+    .answer .r0, .answer .r1 {
+      display: flex;
+      align-items: center;
+      padding: 9px 12px;
+      margin-bottom: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      transition: background-color 0.15s;
+    }
+    .answer .r0:hover, .answer .r1:hover { background-color: #f8fafc; }
+    .answer input { margin-right: 10px; cursor: pointer; }
+    .answernumber { font-weight: 700; margin-right: 6px; color: #475569; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 13px; margin: 10px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; }
+    th { background: #f1f5f9; }
+
+    /* Quiz Navigation Block Sidebar */
+    .sidebar-block {
+      background: #ffffff;
+      border: 1px solid #dee2e6;
+      border-radius: 6px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    .sidebar-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; color: #334155; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px; }
+    .q-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+    .q-grid-btn {
+      padding: 8px;
+      text-align: center;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .q-grid-btn:hover { background: #e2e8f0; }
+    .finish-btn {
+      width: 100%;
+      padding: 8px;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <header class="moodle-navbar">
+    <div class="moodle-logo">🎓 Moodle LMS Simulation</div>
+    <div class="moodle-course">CS301: Advanced Practice Assessment (Permitted Sandbox)</div>
+  </header>
+
+  <div class="quiz-container">
+    <!-- Main Content Area with All 8 Question Types -->
+    <main>
+      <div class="quiz-header">
+        <h1 class="quiz-title">Practice Quiz — All 8 Moodle Question Layouts</h1>
+        <p class="quiz-subtitle">This test harness contains every standard Moodle question type for verifying extension behavior.</p>
+      </div>
+
+      <div class="test-guide-card">
+        <strong>⚡ Moodle AI Quick Answer — Keyboard Shortcuts Guide:</strong><br><br>
+        1. <strong><kbd style="background:#09090b; color:#fff; padding:2px 6px; border-radius:4px; font-family:monospace;">Shift + Z</kbd> — Solve Focused Question:</strong> Hover or click any question below and press <code>Shift + Z</code>. A tiny dark notification appears in the top-right corner with the concise answer (e.g., <code>B — Chloroplasts</code>) and automatically disappears after 1 second.<br><br>
+        2. <strong><kbd style="background:#09090b; color:#fff; padding:2px 6px; border-radius:4px; font-family:monospace;">Shift + X</kbd> — Solve via Screenshot:</strong> Crops the question region under cursor and evaluates it via Vision AI (ideal for diagrams/code). Disappears after 1 second.<br><br>
+        3. <strong><kbd style="background:#09090b; color:#fff; padding:2px 6px; border-radius:4px; font-family:monospace;">Shift + A</kbd> — Show Last Answer Again:</strong> Re-displays the most recent answer for 1 second without sending another AI request.<br><br>
+        <em>Minimal visual interference: No permanent panels, no chat interfaces, zero webpage modification!</em>
+      </div>
+
+      <!-- 1. Single Choice -->
+      <div id="q1" class="que multichoice deferredfeedback notyetanswered">
+        <div class="info">
+          <h3 class="no">Question <span class="qno">1</span></h3>
+          <div class="state">Not yet answered</div>
+          <div class="grade">Marked out of 1.00</div>
+        </div>
+        <div class="content">
+          <div class="formulation clearfix">
+            <div class="qtext">Where does photosynthesis primarily take place in plant cells?</div>
+            <div class="prompt">Select one:</div>
+            <div class="answer">
+              <div class="r0">
+                <input type="radio" name="q1:1_answer" value="0" id="q1:1_answer0">
+                <label for="q1:1_answer0"><span class="answernumber">a. </span>Mitochondria</label>
+              </div>
+              <div class="r1">
+                <input type="radio" name="q1:1_answer" value="1" id="q1:1_answer1">
+                <label for="q1:1_answer1"><span class="answernumber">b. </span>Chloroplasts</label>
+              </div>
+              <div class="r0">
+                <input type="radio" name="q1:1_answer" value="2" id="q1:1_answer2">
+                <label for="q1:1_answer2"><span class="answernumber">c. </span>Ribosomes</label>
+              </div>
+              <div class="r1">
+                <input type="radio" name="q1:1_answer" value="3" id="q1:1_answer3">
+                <label for="q1:1_answer3"><span class="answernumber">d. </span>Golgi apparatus</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Multiple Answer -->
+      <div id="q2" class="que multichoice deferredfeedback notyetanswered">
+        <div class="info">
+          <h3 class="no">Question <span class="qno">2</span></h3>
+          <div class="state">Not yet answered</div>
+          <div class="grade">Marked out of 1.00</div>
+        </div>
+        <div class="content">
+          <div class="formulation clearfix">
+            <div class="qtext">Select all prime numbers below 10.</div>
+            <div class="prompt">Select one or more:</div>
+            <div class="answer">
+              <div class="r0">
+                <input type="checkbox" name="q2:1_choice0" value="1" id="q2:1_choice0">
+                <label for="q2:1_choice0"><span class="answernumber">a. </span>2</label>
+              </div>
+              <div class="r1">
+                <input type="checkbox" name="q2:1_choice1" value="1" id="q2:1_choice1">
+                <label for="q2:1_choice1"><span class="answernumber">b. </span>3</label>
+              </div>
+              <div class="r0">
+                <input type="checkbox" name="q2:1_choice2" value="1" id="q2:1_choice2">
+                <label for="q2:1_choice2"><span class="answernumber">c. </span>4</label>
+              </div>
+              <div class="r1">
+                <input type="checkbox" name="q2:1_choice3" value="1" id="q2:1_choice3">
+                <label for="q2:1_choice3"><span class="answernumber">d. </span>6</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. True / False -->
+      <div id="q3" class="que truefalse deferredfeedback notyetanswered">
+        <div class="info">
+          <h3 class="no">Question <span class="qno">3</span></h3>
+          <div class="state">Not yet answered</div>
+          <div class="grade">Marked out of 1.00</div>
+        </div>
+        <div class="content">
+          <div class="formulation clearfix">
+            <div class="qtext">The Earth revolves around the Sun in an elliptical orbit.</div>
+            <div class="prompt">Select one:</div>
+            <div class="answer">
+              <div class="r0">
+                <input type="radio" name="q3:1_answer" value="1" id="q3:1_answer1">
+                <label for="q3:1_answer1">True</label>
+              </div>
+              <div class="r1">
+                <input type="radio" name="q3:1_answer" value="0" id="q3:1_answer0">
+                <label for="q3:1_answer0">False</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. Numerical -->
+      <div id="q4" class="que numerical deferredfeedback notyetanswered">
+        <div class="info">
+          <h3 class="no">Question <span class="qno">4</span></h3>
+          <div class="state">Not yet answered</div>
+          <div class="grade">Marked out of 1.00</div>
+        </div>
+        <div class="content">
+          <div class="formulation clearfix">
+            <div class="qtext">Calculate the sum: 15 + 27</div>
+            <div class="answer" style="margin-top: 10px;">
+              <label for="q4:1_answer" style="font-weight: 500;">Answer: </label>
+              <input type="text" name="q4:1_answer" id="q4:1_answer" style="padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 14px;" autocomplete="off">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Formatted Text & Math -->
+      <div id="q5" class="que multichoice deferredfeedback notyetanswered">
+        <div class="info">
+          <h3 class="no">Question <span class="qno">5</span></h3>
+          <div class="state">Not yet answered</div>
+          <div class="grade">Marked out of 1.00</div>
+        </div>
+        <div class="content">
+          <div class="formulation clearfix">
+            <div class="qtext">
+              <p>Consider the reaction kinetics where the Gibbs Free Energy formula is <span class="filter_mathjaxloader_equation">\( \Delta G = \Delta H - T\Delta S \)</span>:</p>
+              <table>
+                <thead>
+                  <tr><th>Reaction State</th><th>Enthalpy (&Delta;H)</th><th>Entropy (&Delta;S)</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>State A</td><td>&lt; 0 (Exothermic)</td><td>&gt; 0 (Disorder increases)</td></tr>
+                </tbody>
+              </table>
+              <p>Under what condition is <strong>State A</strong> spontaneous?</p>
+            </div>
+            <div class="prompt">Select one:</div>
+            <div class="answer">
+              <div class="r0">
+                <input type="radio" name="q5:1_answer" value="0" id="q5:1_answer0">
+                <label for="q5:1_answer0"><span class="answernumber">a. </span>Spontaneous at all temperatures</label>
+              </div>
+              <div class="r1">
+                <input type="radio" name="q5:1_answer" value="1" id="q5:1_answer1">
+                <label for="q5:1_answer1"><span class="answernumber">b. </span>Only at high temperatures</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. Code Question -->
+      <div id="q6" class="que multichoice deferredfeedback notyetanswered">
+        <div class="info">
+          <h3 class="no">Question <span class="qno">6</span></h3>
+          <div class="state">Not yet answered</div>
+          <div class="grade">Marked out of 1.00</div>
+        </div>
+        <div class="content">
+          <div class="formulation clearfix">
+            <div class="qtext">
+              <p>What is the output of the following Python snippet?</p>
+              <pre><code>def compute():
+    return [i ** 2 for i in range(3)]
+
+print(compute())</code></pre>
+            </div>
+            <div class="prompt">Select one:</div>
+            <div class="answer">
+              <div class="r0">
+                <input type="radio" name="q6:1_answer" value="0" id="q6:1_answer0">
+                <label for="q6:1_answer0"><span class="answernumber">a. </span>[1, 4, 9]</label>
+              </div>
+              <div class="r1">
+                <input type="radio" name="q6:1_answer" value="1" id="q6:1_answer1">
+                <label for="q6:1_answer1"><span class="answernumber">b. </span>[0, 1, 4]</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Sidebar Quiz Navigation Block -->
+    <aside>
+      <div class="sidebar-block">
+        <h3 class="sidebar-title">Quiz navigation</h3>
+        <div class="q-grid">
+          <a href="#q1" class="q-grid-btn">1</a>
+          <a href="#q2" class="q-grid-btn">2</a>
+          <a href="#q3" class="q-grid-btn">3</a>
+          <a href="#q4" class="q-grid-btn">4</a>
+          <a href="#q5" class="q-grid-btn">5</a>
+          <a href="#q6" class="q-grid-btn">6</a>
+        </div>
+        <button class="finish-btn">Finish attempt ...</button>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

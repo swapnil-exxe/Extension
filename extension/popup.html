@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Moodle AI Quick Answer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      width: 335px;
+      padding: 14px;
+      background: #0f172a;
+      color: #f8fafc;
+      font-size: 13px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #1e293b;
+      margin-bottom: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .brand-icon {
+      font-size: 16px;
+    }
+
+    .brand-title {
+      font-weight: 800;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      color: #f8fafc;
+      text-transform: uppercase;
+    }
+
+    /* Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 34px;
+      height: 18px;
+    }
+
+    .switch input { opacity: 0; width: 0; height: 0; }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #334155;
+      transition: .2s;
+      border-radius: 18px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider { background-color: #3b82f6; }
+    input:checked + .slider:before { transform: translateX(16px); }
+
+    /* Primary Quick Action Button (Snip & Solve) */
+    .hero-action {
+      margin-bottom: 14px;
+    }
+
+    .btn-hero {
+      width: 100%;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #ffffff;
+      border: 1px solid #3b82f6;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+      transition: all 0.15s ease;
+    }
+
+    .btn-hero:hover {
+      background: linear-gradient(135deg, #1d4ed8, #1e40af);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+    }
+
+    .btn-hero .hero-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-hero .hero-kbd {
+      background: rgba(15, 23, 42, 0.6);
+      color: #93c5fd;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    /* Section Headers */
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    /* Provider Cards */
+    .providers-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .provider-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 12px;
+      transition: border-color 0.15s, background-color 0.15s;
+    }
+
+    .provider-card.active-card {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 1px #3b82f6;
+    }
+
+    .provider-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .provider-identity {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .provider-logo {
+      font-size: 16px;
+    }
+
+    .provider-name {
+      font-weight: 600;
+      font-size: 13px;
+      color: #f1f5f9;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 12px;
+      background: #0f172a;
+      color: #94a3b8;
+      border: 1px solid #334155;
+    }
+
+    .status-badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #64748b;
+    }
+
+    .status-badge.connected {
+      color: #34d399;
+      border-color: #065f46;
+      background: #064e3b33;
+    }
+    .status-badge.connected .dot {
+      background: #10b981;
+    }
+
+    .status-badge.connecting {
+      color: #60a5fa;
+      border-color: #1e40af;
+      background: #1e3a8a33;
+    }
+    .status-badge.connecting .dot {
+      background: #3b82f6;
+      animation: pulse 1s infinite alternate;
+    }
+
+    .status-badge.expired {
+      color: #fbbf24;
+      border-color: #92400e;
+      background: #78350f33;
+    }
+    .status-badge.expired .dot {
+      background: #f59e0b;
+    }
+
+    .status-badge.error {
+      color: #f87171;
+      border-color: #991b1b;
+      background: #7f1d1d33;
+    }
+    .status-badge.error .dot {
+      background: #ef4444;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.3; }
+      100% { opacity: 1; }
+    }
+
+    /* Buttons */
+    .btn-connect-oauth {
+      width: 100%;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background 0.15s;
+    }
+
+    .btn-connect-oauth:hover {
+      background: #1d4ed8;
+    }
+
+    .btn-connect-oauth:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .provider-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 6px;
+    }
+
+    .provider-selection {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #cbd5e1;
+      font-weight: 600;
+      user-select: none;
+    }
+
+    .provider-selection input[type="radio"] {
+      cursor: pointer;
+      accent-color: #3b82f6;
+    }
+
+    .btn-disconnect {
+      background: transparent;
+      color: #94a3b8;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-disconnect:hover {
+      color: #ef4444;
+      border-color: #ef4444;
+      background: #ef444415;
+    }
+
+    .key-toggle-link {
+      font-size: 10px;
+      color: #64748b;
+      text-decoration: underline;
+      cursor: pointer;
+      margin-top: 6px;
+      display: inline-block;
+    }
+    .key-toggle-link:hover {
+      color: #94a3b8;
+    }
+
+    .key-input-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .key-input {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #f8fafc;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      outline: none;
+    }
+
+    .key-input:focus {
+      border-color: #3b82f6;
+    }
+
+    .btn-save-key {
+      background: #334155;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    .btn-save-key:hover {
+      background: #475569;
+    }
+
+    .key-feedback {
+      font-size: 11px;
+      margin-top: 6px;
+      line-height: 1.3;
+      display: none;
+      padding: 4px 6px;
+      border-radius: 4px;
+    }
+    .key-feedback.error {
+      color: #f87171;
+      background: #7f1d1d22;
+      border: 1px solid #991b1b44;
+      display: block;
+    }
+    .key-feedback.info {
+      color: #94a3b8;
+      display: block;
+    }
+
+    /* Shortcuts Section */
+    .shortcut-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-bottom: 12px;
+    }
+
+    .shortcut-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 6px 9px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .shortcut-item:hover {
+      background: #273549;
+      border-color: #475569;
+    }
+
+    .shortcut-label {
+      font-size: 11px;
+      color: #cbd5e1;
+      font-weight: 500;
+    }
+
+    .kbd {
+      background: #0f172a;
+      color: #38bdf8;
+      border: 1px solid #334155;
+      border-radius: 4px;
+      padding: 2px 5px;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    /* Footer */
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid #1e293b;
+      padding-top: 8px;
+      font-size: 11px;
+    }
+
+    .server-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #94a3b8;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #64748b;
+    }
+
+    .status-dot.online { background: #10b981; }
+    .status-dot.offline { background: #ef4444; }
+
+    .settings-link {
+      color: #60a5fa;
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .settings-link:hover {
+      text-decoration: underline;
+      color: #93c5fd;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">
+      <span class="brand-icon">⚡</span>
+      <span class="brand-title">Moodle AI Quick Answer</span>
+    </div>
+    <label class="switch" title="Enable or disable extension">
+      <input type="checkbox" id="toggle-enabled" checked>
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <!-- Primary Screenshot Button -->
+  <div class="hero-action">
+    <button class="btn-hero" id="btn-hero-vision" title="Drag and snip any question directly with your mouse">
+      <div class="hero-left">
+        <span>📸</span>
+        <span>Snip & Solve Screen</span>
+      </div>
+      <span class="hero-kbd">Shift + X</span>
+    </button>
+  </div>
+
+  <!-- Provider Selection Section -->
+  <div class="section-title">Choose your AI provider:</div>
+  <div class="providers-container">
+    <!-- Gemini Provider Card -->
+    <div class="provider-card" id="card-gemini">
+      <div class="provider-top">
+        <div class="provider-identity">
+          <span class="provider-logo">✦</span>
+          <span class="provider-name">Gemini</span>
+        </div>
+        <div class="status-badge" id="badge-gemini">
+          <span class="dot"></span>
+          <span class="badge-text" id="status-gemini">Not connected</span>
+        </div>
+      </div>
+
+      <!-- Connected View -->
+      <div class="provider-actions" id="actions-gemini" style="display: none;">
+        <label class="provider-selection">
+          <input type="radio" name="active-provider" id="radio-gemini" value="gemini">
+          <span>Active Provider</span>
+        </label>
+        <button class="btn-disconnect" id="btn-disconnect-gemini">Disconnect</button>
+      </div>
+
+      <!-- Not Connected View -->
+      <div class="provider-connect-block" id="connect-block-gemini">
+        <button class="btn-connect-oauth" id="btn-connect-gemini">
+          <span>Connect Gemini</span>
+        </button>
+        <div class="key-feedback" id="feedback-gemini"></div>
+        <span class="key-toggle-link" id="toggle-key-gemini">Or enter API key manually</span>
+        <div class="key-input-row" id="key-row-gemini" style="display: none;">
+          <input type="password" class="key-input" id="key-input-gemini" placeholder="AIzaSy... (free key)">
+          <button class="btn-save-key" id="btn-save-gemini">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ChatGPT Provider Card -->
+    <div class="provider-card" id="card-chatgpt">
+      <div class="provider-top">
+        <div class="provider-identity">
+          <span class="provider-logo">🤖</span>
+          <span class="provider-name">ChatGPT</span>
+        </div>
+        <div class="status-badge" id="badge-chatgpt">
+          <span class="dot"></span>
+          <span class="badge-text" id="status-chatgpt">Not connected</span>
+        </div>
+      </div>
+
+      <!-- Connected View -->
+      <div class="provider-actions" id="actions-chatgpt" style="display: none;">
+        <label class="provider-selection">
+          <input type="radio" name="active-provider" id="radio-chatgpt" value="chatgpt">
+          <span>Active Provider</span>
+        </label>
+        <button class="btn-disconnect" id="btn-disconnect-chatgpt">Disconnect</button>
+      </div>
+
+      <!-- Not Connected View -->
+      <div class="provider-connect-block" id="connect-block-chatgpt">
+        <button class="btn-connect-oauth" id="btn-connect-chatgpt">
+          <span>Connect ChatGPT</span>
+        </button>
+        <div class="key-feedback" id="feedback-chatgpt"></div>
+        <span class="key-toggle-link" id="toggle-key-chatgpt">Or enter API key manually</span>
+        <div class="key-input-row" id="key-row-chatgpt" style="display: none;">
+          <input type="password" class="key-input" id="key-input-chatgpt" placeholder="sk-... (OpenAI key)">
+          <button class="btn-save-key" id="btn-save-chatgpt">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts -->
+  <div class="section-title">All Shortcuts</div>
+  <div class="shortcut-list">
+    <div class="shortcut-item" id="btn-trigger-solve" title="Select text or click on page">
+      <span class="shortcut-label">Solve Selected Text</span>
+      <span class="kbd">Shift + Z</span>
+    </div>
+    <div class="shortcut-item" id="btn-trigger-repeat" title="Display previous answer corner popup">
+      <span class="shortcut-label">Show Last Answer Again</span>
+      <span class="kbd">Shift + A</span>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="server-status">
+      <span class="status-dot" id="server-dot"></span>
+      <span id="server-text">Checking backend...</span>
+    </div>
+    <a class="settings-link" id="link-settings">Settings ⚙</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

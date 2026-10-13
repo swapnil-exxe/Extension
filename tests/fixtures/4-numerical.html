@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Moodle Test Fixture 4: Numerical Question</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; padding: 20px; }
+    .que { background: #fff; border: 1px solid #dee2e6; border-radius: 4px; max-width: 780px; margin: 0 auto; display: flex; }
+    .info { width: 140px; background: #e9ecef; padding: 12px; font-size: 13px; border-right: 1px solid #dee2e6; }
+    .content { padding: 16px; flex: 1; }
+    .qtext { font-size: 15px; margin-bottom: 12px; font-weight: 500; }
+    .answer { margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+    .form-control { padding: 6px 10px; border: 1px solid #ced4da; border-radius: 4px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h2>Moodle Practice Quiz: Physics & Math</h2>
+  <div id="q4" class="que numerical deferredfeedback notyetanswered">
+    <div class="info">
+      <h3 class="no">Question <span class="qno">4</span></h3>
+      <div class="state">Not yet answered</div>
+      <div class="grade">Marked out of 1.00</div>
+    </div>
+    <div class="content">
+      <div class="formulation clearfix">
+        <div class="qtext">Calculate the sum: 15 + 27</div>
+        <div class="answer">
+          <label for="q4:1_answer">Answer: </label>
+          <input type="text" name="q4:1_answer" id="q4:1_answer" class="form-control" autocomplete="off">
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

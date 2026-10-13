@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Moodle Test Fixture 5: Formatted Text Question</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; padding: 20px; }
+    .que { background: #fff; border: 1px solid #dee2e6; border-radius: 4px; max-width: 780px; margin: 0 auto; display: flex; }
+    .info { width: 140px; background: #e9ecef; padding: 12px; font-size: 13px; border-right: 1px solid #dee2e6; }
+    .content { padding: 16px; flex: 1; }
+    .qtext { font-size: 15px; margin-bottom: 12px; }
+    .prompt { font-size: 13px; color: #6c757d; margin-bottom: 12px; font-style: italic; }
+    .answer .r0, .answer .r1 { display: flex; align-items: center; padding: 8px 12px; margin-bottom: 6px; border: 1px solid #edf2f7; border-radius: 4px; }
+    .answer input { margin-right: 10px; }
+    .answernumber { font-weight: bold; margin-right: 6px; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+    th, td { border: 1px solid #dee2e6; padding: 6px 10px; text-align: left; }
+    th { background: #f8f9fa; }
+  </style>
+</head>
+<body>
+  <h2>Moodle Practice Quiz: Chemistry & Thermodynamics</h2>
+  <div id="q5" class="que multichoice deferredfeedback notyetanswered">
+    <div class="info">
+      <h3 class="no">Question <span class="qno">5</span></h3>
+      <div class="state">Not yet answered</div>
+      <div class="grade">Marked out of 1.00</div>
+    </div>
+    <div class="content">
+      <div class="formulation clearfix">
+        <div class="qtext">
+          <p>Consider the reaction kinetics summarized in the table below where the formula is governed by <span class="filter_mathjaxloader_equation">\( \Delta G = \Delta H - T\Delta S \)</span>:</p>
+          <table>
+            <thead>
+              <tr><th>Reaction State</th><th>Enthalpy (&Delta;H)</th><th>Entropy (&Delta;S)</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>State A</td><td>&lt; 0 (Exothermic)</td><td>&gt; 0 (Disorder increases)</td></tr>
+              <tr><td>State B</td><td>&gt; 0 (Endothermic)</td><td>&lt; 0 (Order increases)</td></tr>
+            </tbody>
+          </table>
+          <p>Under what temperature condition is <strong>State A</strong> spontaneous?</p>
+        </div>
+        <div class="prompt">Select one:</div>
+        <div class="answer">
+          <div class="r0">
+            <input type="radio" name="q5:1_answer" value="0" id="q5:1_answer0">
+            <label for="q5:1_answer0"><span class="answernumber">a. </span>Spontaneous at all temperatures</label>
+          </div>
+          <div class="r1">
+            <input type="radio" name="q5:1_answer" value="1" id="q5:1_answer1">
+            <label for="q5:1_answer1"><span class="answernumber">b. </span>Only at high temperatures</label>
+          </div>
+          <div class="r0">
+            <input type="radio" name="q5:1_answer" value="2" id="q5:1_answer2">
+            <label for="q5:1_answer2"><span class="answernumber">c. </span>Only at low temperatures</label>
+          </div>
+          <div class="r1">
+            <input type="radio" name="q5:1_answer" value="3" id="q5:1_answer3">
+            <label for="q5:1_answer3"><span class="answernumber">d. </span>Never spontaneous</label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

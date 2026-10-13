@@ -1,0 +1,17 @@
+/**
+ * Moodle AI Quiz Assistant - Global Extension Styles
+ */
+
+/* Subtle focus indicator on the active Moodle question */
+.moodle-ai-focused-question {
+  outline: 2px solid #6366f1 !important;
+  outline-offset: 3px !important;
+  transition: outline 0.2s ease-in-out !important;
+}
+
+/* Subtle suggestion highlight on the corresponding option in Moodle without selecting it */
+.moodle-ai-option-highlight {
+  background-color: rgba(99, 102, 241, 0.12) !important;
+  border-radius: 4px !important;
+  transition: background-color 0.25s ease-in-out !important;
+}

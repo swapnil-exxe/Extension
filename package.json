@@ -1,0 +1,14 @@
+{
+  "name": "moodle-ai-quiz-assistant",
+  "version": "1.0.0",
+  "description": "Chrome Extension & Node.js AI Backend for Moodle Quiz Assistance",
+  "scripts": {
+    "start": "npm --prefix backend start",
+    "backend": "npm --prefix backend start",
+    "dev": "npm --prefix backend run dev",
+    "test": "npm --prefix backend test"
+  },
+  "keywords": ["moodle", "quiz", "chrome-extension", "ai", "llm"],
+  "author": "Antigravity",
+  "license": "MIT"
+}

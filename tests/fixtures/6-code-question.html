@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Moodle Test Fixture 6: Code Question</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; padding: 20px; }
+    .que { background: #fff; border: 1px solid #dee2e6; border-radius: 4px; max-width: 780px; margin: 0 auto; display: flex; }
+    .info { width: 140px; background: #e9ecef; padding: 12px; font-size: 13px; border-right: 1px solid #dee2e6; }
+    .content { padding: 16px; flex: 1; }
+    .qtext { font-size: 15px; margin-bottom: 12px; }
+    .prompt { font-size: 13px; color: #6c757d; margin-bottom: 12px; font-style: italic; }
+    pre { background: #282c34; color: #abb2bf; padding: 12px; border-radius: 6px; font-family: monospace; overflow-x: auto; }
+    .answer .r0, .answer .r1 { display: flex; align-items: center; padding: 8px 12px; margin-bottom: 6px; border: 1px solid #edf2f7; border-radius: 4px; }
+    .answer input { margin-right: 10px; }
+    .answernumber { font-weight: bold; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <h2>Moodle Practice Quiz: Computer Science</h2>
+  <div id="q6" class="que multichoice deferredfeedback notyetanswered">
+    <div class="info">
+      <h3 class="no">Question <span class="qno">6</span></h3>
+      <div class="state">Not yet answered</div>
+      <div class="grade">Marked out of 1.00</div>
+    </div>
+    <div class="content">
+      <div class="formulation clearfix">
+        <div class="qtext">
+          <p>What is the output of the following Python snippet?</p>
+          <pre><code>def compute():
+    return [i ** 2 for i in range(3)]
+
+print(compute())</code></pre>
+        </div>
+        <div class="prompt">Select one:</div>
+        <div class="answer">
+          <div class="r0">
+            <input type="radio" name="q6:1_answer" value="0" id="q6:1_answer0">
+            <label for="q6:1_answer0"><span class="answernumber">a. </span>[1, 4, 9]</label>
+          </div>
+          <div class="r1">
+            <input type="radio" name="q6:1_answer" value="1" id="q6:1_answer1">
+            <label for="q6:1_answer1"><span class="answernumber">b. </span>[0, 1, 4]</label>
+          </div>
+          <div class="r0">
+            <input type="radio" name="q6:1_answer" value="2" id="q6:1_answer2">
+            <label for="q6:1_answer2"><span class="answernumber">c. </span>[0, 1, 4, 9]</label>
+          </div>
+          <div class="r1">
+            <input type="radio" name="q6:1_answer" value="3" id="q6:1_answer3">
+            <label for="q6:1_answer3"><span class="answernumber">d. </span>SyntaxError</label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
