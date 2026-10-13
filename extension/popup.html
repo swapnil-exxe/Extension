@@ -370,6 +370,30 @@
       accent-color: #3b82f6;
     }
 
+    .provider-btn-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-change-key {
+      background: #1e293b;
+      color: #93c5fd;
+      border: 1px solid #3b82f644;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-change-key:hover {
+      background: #2563eb22;
+      border-color: #3b82f6;
+      color: #bfdbfe;
+    }
+
     .btn-disconnect {
       background: transparent;
       color: #94a3b8;
@@ -566,17 +590,17 @@
   <!-- Tokens / Coins Usage Widget -->
   <div class="usage-card">
     <div class="usage-header">
-      <span>🪙 AI Solves & Credits</span>
+      <span>🪙 Model Tokens & Solves</span>
       <div class="usage-coins">
         <span class="usage-val" id="usage-remaining">100</span>
-        <span class="usage-sub">/ 100 left</span>
+        <span class="usage-sub" id="usage-percent-left">(100% left)</span>
       </div>
     </div>
     <div class="usage-bar-bg">
       <div class="usage-bar-fill" id="usage-bar-fill" style="width: 100%;"></div>
     </div>
     <div class="usage-footer">
-      <span id="usage-status-desc">⚡ Pack Status: Active & Stocked</span>
+      <span id="usage-status-desc">⚡ 0% used • Active Model: Gemini</span>
       <button class="btn-reset-tokens" id="btn-refill-tokens" title="Reset quota counter">+ Refill Pack</button>
     </div>
   </div>
@@ -603,7 +627,14 @@
           <input type="radio" name="active-provider" id="radio-gemini" value="gemini">
           <span>Active Provider</span>
         </label>
-        <button class="btn-disconnect" id="btn-disconnect-gemini">Disconnect</button>
+        <div class="provider-btn-group">
+          <button class="btn-change-key" id="btn-toggle-key-connected-gemini" title="Add or change API key">+ Key</button>
+          <button class="btn-disconnect" id="btn-disconnect-gemini">Disconnect</button>
+        </div>
+      </div>
+      <div class="key-input-row" id="key-row-connected-gemini" style="display: none; margin-top: 8px;">
+        <input type="password" class="key-input" id="key-input-connected-gemini" placeholder="AIzaSy... (new Gemini key)">
+        <button class="btn-save-key" id="btn-save-connected-gemini">Save</button>
       </div>
 
       <!-- Not Connected View -->
@@ -639,7 +670,14 @@
           <input type="radio" name="active-provider" id="radio-chatgpt" value="chatgpt">
           <span>Active Provider</span>
         </label>
-        <button class="btn-disconnect" id="btn-disconnect-chatgpt">Disconnect</button>
+        <div class="provider-btn-group">
+          <button class="btn-change-key" id="btn-toggle-key-connected-chatgpt" title="Add or change API key">+ Key</button>
+          <button class="btn-disconnect" id="btn-disconnect-chatgpt">Disconnect</button>
+        </div>
+      </div>
+      <div class="key-input-row" id="key-row-connected-chatgpt" style="display: none; margin-top: 8px;">
+        <input type="password" class="key-input" id="key-input-connected-chatgpt" placeholder="sk-... (new OpenAI key)">
+        <button class="btn-save-key" id="btn-save-connected-chatgpt">Save</button>
       </div>
 
       <!-- Not Connected View -->

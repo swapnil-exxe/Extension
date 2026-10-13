@@ -49,6 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Token / Coins Counter Elements
   const usageRemaining = document.getElementById('usage-remaining');
+  const usagePercentLeft = document.getElementById('usage-percent-left');
   const usageBarFill = document.getElementById('usage-bar-fill');
   const usageStatusDesc = document.getElementById('usage-status-desc');
   const btnRefillTokens = document.getElementById('btn-refill-tokens');
@@ -58,7 +59,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     'enabled',
     'backendUrl',
     'totalTokens',
-    'usedTokens'
+    'usedTokens',
+    'activeProvider'
   ]);
   let effectiveBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
   // If user had old localhost saved in browser storage, auto-migrate to live cloud backend
@@ -68,24 +70,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   toggleEnabled.checked = settings.enabled !== false;
 
-  // Render tokens / credit stock
-  function renderTokenQuota(total = 100, used = 0) {
-    const left = Math.max(0, total - used);
-    usageRemaining.textContent = left;
-    const pct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
-    usageBarFill.style.width = `${pct}%`;
+  let currentActiveModelName = 'Gemini';
 
-    if (pct <= 0) {
+  // Render tokens / credit stock with percentage used and remaining
+  function renderTokenQuota(total = 100, used = 0, modelName = currentActiveModelName) {
+    const left = Math.max(0, total - used);
+    const leftPct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
+    const usedPct = 100 - leftPct;
+
+    usageRemaining.textContent = left;
+    if (usagePercentLeft) {
+      usagePercentLeft.textContent = `(${leftPct}% left)`;
+    }
+    usageBarFill.style.width = `${leftPct}%`;
+
+    if (leftPct <= 0) {
       usageBarFill.style.background = '#ef4444';
-      usageStatusDesc.textContent = '❌ Out of stock! Click Refill Pack.';
+      usageStatusDesc.textContent = `❌ Out of tokens (100% used) • Refill required for ${modelName}`;
       usageStatusDesc.style.color = '#f87171';
-    } else if (pct <= 20) {
+    } else if (leftPct <= 20) {
       usageBarFill.style.background = '#f59e0b';
-      usageStatusDesc.textContent = '⚠️ Low stock: Need new pack soon!';
+      usageStatusDesc.textContent = `⚠️ Low: ${usedPct}% used (${leftPct}% left) • Model: ${modelName}`;
       usageStatusDesc.style.color = '#fbbf24';
     } else {
       usageBarFill.style.background = 'linear-gradient(90deg, #10b981, #3b82f6)';
-      usageStatusDesc.textContent = '⚡ Pack Status: Active & Stocked';
+      usageStatusDesc.textContent = `⚡ ${usedPct}% used • ${leftPct}% left • Active Model: ${modelName}`;
       usageStatusDesc.style.color = '#94a3b8';
     }
   }
@@ -98,7 +107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   btnRefillTokens.addEventListener('click', async () => {
     await chrome.storage.local.set({ totalTokens: 100, usedTokens: 0 });
     renderTokenQuota(100, 0);
-    usageStatusDesc.textContent = '🎉 Pack refilled to 100 solves!';
+    usageStatusDesc.textContent = '🎉 Pack refilled to 100 tokens (100% full)!';
   });
 
   // Initial loads
@@ -151,6 +160,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (isActive) {
       card.classList.add('active-card');
       radio.checked = true;
+      currentActiveModelName = isGpt ? 'ChatGPT (GPT-4o-mini)' : 'Gemini (Flash-Lite)';
+      chrome.storage.local.get(['totalTokens', 'usedTokens'], (st) => {
+        renderTokenQuota(st.totalTokens || 100, st.usedTokens || 0, currentActiveModelName);
+      });
     } else {
       card.classList.remove('active-card');
       radio.checked = false;
@@ -323,6 +336,43 @@ document.addEventListener('DOMContentLoaded', async () => {
   btnSaveChatgpt.addEventListener('click', () => {
     saveKey('chatgpt', keyInputChatgpt, btnSaveChatgpt, feedbackChatgpt);
   });
+
+  // Connected Key change buttons & inputs
+  const btnToggleKeyConnectedGemini = document.getElementById('btn-toggle-key-connected-gemini');
+  const keyRowConnectedGemini = document.getElementById('key-row-connected-gemini');
+  const keyInputConnectedGemini = document.getElementById('key-input-connected-gemini');
+  const btnSaveConnectedGemini = document.getElementById('btn-save-connected-gemini');
+
+  const btnToggleKeyConnectedChatgpt = document.getElementById('btn-toggle-key-connected-chatgpt');
+  const keyRowConnectedChatgpt = document.getElementById('key-row-connected-chatgpt');
+  const keyInputConnectedChatgpt = document.getElementById('key-input-connected-chatgpt');
+  const btnSaveConnectedChatgpt = document.getElementById('btn-save-connected-chatgpt');
+
+  if (btnToggleKeyConnectedGemini) {
+    btnToggleKeyConnectedGemini.addEventListener('click', () => {
+      keyRowConnectedGemini.style.display = keyRowConnectedGemini.style.display === 'none' ? 'flex' : 'none';
+      if (keyRowConnectedGemini.style.display === 'flex') keyInputConnectedGemini.focus();
+    });
+  }
+
+  if (btnSaveConnectedGemini) {
+    btnSaveConnectedGemini.addEventListener('click', () => {
+      saveKey('gemini', keyInputConnectedGemini, btnSaveConnectedGemini, feedbackGemini);
+    });
+  }
+
+  if (btnToggleKeyConnectedChatgpt) {
+    btnToggleKeyConnectedChatgpt.addEventListener('click', () => {
+      keyRowConnectedChatgpt.style.display = keyRowConnectedChatgpt.style.display === 'none' ? 'flex' : 'none';
+      if (keyRowConnectedChatgpt.style.display === 'flex') keyInputConnectedChatgpt.focus();
+    });
+  }
+
+  if (btnSaveConnectedChatgpt) {
+    btnSaveConnectedChatgpt.addEventListener('click', () => {
+      saveKey('chatgpt', keyInputConnectedChatgpt, btnSaveConnectedChatgpt, feedbackChatgpt);
+    });
+  }
 
   toggleKeyGemini.addEventListener('click', () => {
     keyRowGemini.style.display = keyRowGemini.style.display === 'none' ? 'flex' : 'none';
