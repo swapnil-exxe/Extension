@@ -192,26 +192,32 @@ async function handleAnalyzeQuestion(payload) {
     const data = await response.json();
 
     // Deduct 1 credit/token upon successful solve
-    const tokenStore = await chrome.storage.local.get([
-      'usedTokens',
-      'tokensGeminiUsed',
-      'tokensChatgptUsed'
-    ]);
-    const currentUsed = tokenStore.usedTokens || 0;
-    const isGpt = (data.provider || '').toLowerCase().includes('chatgpt') || (data.provider || '').toLowerCase().includes('openai');
-    
-    if (isGpt) {
-      const gptUsed = tokenStore.tokensChatgptUsed || 0;
+    const allStore = await chrome.storage.local.get(null);
+    const currentUsed = allStore.usedTokens || 0;
+    const activeProvider = allStore.activeProvider || (data.provider || '').toLowerCase();
+
+    if (activeProvider && activeProvider.startsWith('custom_')) {
+      const customUsedKey = `tokens_${activeProvider}_used`;
+      const prevCustomUsed = allStore[customUsedKey] || 0;
       await chrome.storage.local.set({
         usedTokens: currentUsed + 1,
-        tokensChatgptUsed: gptUsed + 1
+        [customUsedKey]: prevCustomUsed + 1
       });
     } else {
-      const geminiUsed = tokenStore.tokensGeminiUsed || 0;
-      await chrome.storage.local.set({
-        usedTokens: currentUsed + 1,
-        tokensGeminiUsed: geminiUsed + 1
-      });
+      const isGpt = (data.provider || '').toLowerCase().includes('chatgpt') || (data.provider || '').toLowerCase().includes('openai') || activeProvider === 'chatgpt';
+      if (isGpt) {
+        const gptUsed = allStore.tokensChatgptUsed || 0;
+        await chrome.storage.local.set({
+          usedTokens: currentUsed + 1,
+          tokensChatgptUsed: gptUsed + 1
+        });
+      } else {
+        const geminiUsed = allStore.tokensGeminiUsed || 0;
+        await chrome.storage.local.set({
+          usedTokens: currentUsed + 1,
+          tokensGeminiUsed: geminiUsed + 1
+        });
+      }
     }
 
     return { success: true, data };

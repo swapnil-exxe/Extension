@@ -205,13 +205,93 @@
     }
 
     /* Section Headers */
+    .section-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
     .section-title {
       font-size: 11px;
       font-weight: 700;
       color: #94a3b8;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      margin-bottom: 8px;
+    }
+
+    .btn-add-provider {
+      background: #1e293b;
+      color: #38bdf8;
+      border: 1px solid #0284c7;
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s;
+    }
+
+    .btn-add-provider:hover {
+      background: #0284c722;
+      border-color: #38bdf8;
+      color: #7dd3fc;
+    }
+
+    /* Custom Add Provider Box */
+    .add-provider-form {
+      background: #0f172a;
+      border: 1px dashed #38bdf888;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .add-provider-form input, .add-provider-form select {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #f8fafc;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 11px;
+      outline: none;
+    }
+
+    .add-provider-form input:focus, .add-provider-form select:focus {
+      border-color: #38bdf8;
+    }
+
+    .add-provider-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .btn-submit-provider {
+      background: #0284c7;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-cancel-provider {
+      background: transparent;
+      color: #94a3b8;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 11px;
+      cursor: pointer;
     }
 
     /* Provider Cards */
@@ -292,6 +372,25 @@
 
     .provider-quota-fill.chatgpt {
       background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    }
+
+    .provider-quota-fill.custom {
+      background: linear-gradient(90deg, #ec4899, #f59e0b);
+    }
+
+    .btn-remove-custom {
+      background: transparent;
+      color: #ef4444;
+      border: 1px solid #ef444444;
+      border-radius: 6px;
+      padding: 4px 6px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-remove-custom:hover {
+      background: #ef444422;
+      border-color: #ef4444;
     }
 
     .provider-logo {
@@ -652,8 +751,40 @@
   </div>
 
   <!-- Provider Selection Section -->
-  <div class="section-title">Choose your AI provider:</div>
+  <div class="section-header-row">
+    <span class="section-title">Choose your AI provider:</span>
+    <button class="btn-add-provider" id="btn-show-add-provider" title="Add another AI provider (Claude, DeepSeek, Groq, Ollama, etc.)">
+      <span>➕</span> <span>Add Provider</span>
+    </button>
+  </div>
+
+  <!-- Dynamic Add Provider Form -->
+  <div class="add-provider-form" id="add-provider-form">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+      <span style="font-size: 11px; font-weight: 700; color: #38bdf8;">Add New AI Provider</span>
+      <span style="font-size: 10px; color: #94a3b8;">Preset or Custom</span>
+    </div>
+    <select id="new-provider-select">
+      <option value="claude">Claude (Anthropic - Claude 3.5 Sonnet)</option>
+      <option value="deepseek">DeepSeek (DeepSeek V3 / R1)</option>
+      <option value="groq">Groq (Llama 3.3 70B - Ultra Fast)</option>
+      <option value="openrouter">OpenRouter (Multi-model router)</option>
+      <option value="mistral">Mistral AI (Mistral Large / Codestral)</option>
+      <option value="custom">Custom (OpenAI-Compatible endpoint)</option>
+    </select>
+    <input type="text" id="new-provider-name" placeholder="Display Name (e.g. Claude 3.5)" style="display: none;">
+    <input type="text" id="new-provider-endpoint" placeholder="API Base URL (e.g. https://api.deepseek.com/v1)" style="display: none;">
+    <input type="password" id="new-provider-key" placeholder="Enter API Key (sk-... or key)">
+    <div class="add-provider-actions">
+      <button type="button" class="btn-cancel-provider" id="btn-cancel-add-provider">Cancel</button>
+      <button type="button" class="btn-submit-provider" id="btn-save-new-provider">Add & Connect</button>
+    </div>
+  </div>
+
   <div class="providers-container">
+    <!-- Container for dynamic custom providers -->
+    <div id="custom-providers-list"></div>
+
     <!-- Gemini Provider Card -->
     <div class="provider-card" id="card-gemini">
       <div class="provider-top">

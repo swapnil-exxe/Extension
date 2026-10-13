@@ -63,6 +63,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   const tokensPctChatgpt = document.getElementById('tokens-pct-chatgpt');
   const quotaBarChatgpt = document.getElementById('quota-bar-chatgpt');
 
+  // Add Provider Elements
+  const btnShowAddProvider = document.getElementById('btn-show-add-provider');
+  const addProviderForm = document.getElementById('add-provider-form');
+  const newProviderSelect = document.getElementById('new-provider-select');
+  const newProviderName = document.getElementById('new-provider-name');
+  const newProviderEndpoint = document.getElementById('new-provider-endpoint');
+  const newProviderKey = document.getElementById('new-provider-key');
+  const btnCancelAddProvider = document.getElementById('btn-cancel-add-provider');
+  const btnSaveNewProvider = document.getElementById('btn-save-new-provider');
+  const customProvidersList = document.getElementById('custom-providers-list');
+
   // Load extension preferences & tokens
   const settings = await chrome.storage.local.get([
     'enabled',
@@ -73,7 +84,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     'tokensGeminiUsed',
     'tokensChatgptTotal',
     'tokensChatgptUsed',
-    'activeProvider'
+    'activeProvider',
+    'customProviders'
   ]);
   let effectiveBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
   // If user had old localhost saved in browser storage, auto-migrate to live cloud backend
@@ -84,6 +96,106 @@ document.addEventListener('DOMContentLoaded', async () => {
   toggleEnabled.checked = settings.enabled !== false;
 
   let currentActiveModelName = 'Gemini';
+  let customProviders = settings.customProviders || [];
+
+  // Toggle Add Provider form
+  if (btnShowAddProvider) {
+    btnShowAddProvider.addEventListener('click', () => {
+      const isVisible = addProviderForm.style.display === 'flex';
+      addProviderForm.style.display = isVisible ? 'none' : 'flex';
+      if (!isVisible) {
+        newProviderKey.focus();
+      }
+    });
+  }
+
+  if (btnCancelAddProvider) {
+    btnCancelAddProvider.addEventListener('click', () => {
+      addProviderForm.style.display = 'none';
+      newProviderKey.value = '';
+    });
+  }
+
+  if (newProviderSelect) {
+    newProviderSelect.addEventListener('change', () => {
+      const val = newProviderSelect.value;
+      if (val === 'custom') {
+        newProviderName.style.display = 'block';
+        newProviderEndpoint.style.display = 'block';
+        newProviderName.placeholder = 'Provider Name (e.g. My LLM)';
+        newProviderEndpoint.placeholder = 'https://api.example.com/v1';
+      } else {
+        newProviderName.style.display = 'none';
+        newProviderEndpoint.style.display = 'none';
+      }
+    });
+  }
+
+  // Preset dictionary for easy setup
+  const PRESET_PROVIDERS = {
+    claude: { name: 'Claude 3.5 Sonnet', logo: '🟣', endpoint: 'https://api.anthropic.com/v1' },
+    deepseek: { name: 'DeepSeek V3', logo: '🐋', endpoint: 'https://api.deepseek.com/v1' },
+    groq: { name: 'Groq (Llama 3.3)', logo: '⚡', endpoint: 'https://api.groq.com/openai/v1' },
+    openrouter: { name: 'OpenRouter', logo: '🌐', endpoint: 'https://openrouter.ai/api/v1' },
+    mistral: { name: 'Mistral AI', logo: '🌪️', endpoint: 'https://api.mistral.ai/v1' }
+  };
+
+  // Save new custom provider
+  if (btnSaveNewProvider) {
+    btnSaveNewProvider.addEventListener('click', async () => {
+      const type = newProviderSelect.value;
+      const key = newProviderKey.value.trim();
+
+      if (!key) {
+        alert('Please enter an API key for this provider.');
+        return;
+      }
+
+      let name = '';
+      let logo = '🤖';
+      let endpoint = '';
+
+      if (type === 'custom') {
+        name = newProviderName.value.trim() || 'Custom AI';
+        endpoint = newProviderEndpoint.value.trim() || 'https://api.openai.com/v1';
+        logo = '🛠️';
+      } else {
+        const preset = PRESET_PROVIDERS[type] || { name: type, logo: '🤖', endpoint: '' };
+        name = preset.name;
+        logo = preset.logo;
+        endpoint = preset.endpoint;
+      }
+
+      const newId = `custom_${type}_${Date.now()}`;
+      const newProviderObj = {
+        id: newId,
+        type,
+        name,
+        logo,
+        apiKey: key,
+        endpoint,
+        totalTokens: 100,
+        usedTokens: 0,
+        status: 'connected',
+        createdAt: Date.now()
+      };
+
+      customProviders.push(newProviderObj);
+      await chrome.storage.local.set({
+        customProviders,
+        activeProvider: newId,
+        [`tokens_${newId}_total`]: 100,
+        [`tokens_${newId}_used`]: 0
+      });
+
+      // Reset & hide form
+      newProviderKey.value = '';
+      addProviderForm.style.display = 'none';
+
+      renderCustomProviders();
+      refreshAuthStatus(effectiveBackendUrl);
+    });
+  }
 
   // Render per-model quota line
   function renderModelQuotaLine(model, total = 100, used = 0) {
@@ -107,6 +219,129 @@ document.addEventListener('DOMContentLoaded', async () => {
         barEl.style.background = isGemini 
           ? 'linear-gradient(90deg, #10b981, #06b6d4)' 
           : 'linear-gradient(90deg, #3b82f6, #8b5cf6)';
+      }
+    }
+  }
+
+  // Render dynamic custom providers
+  async function renderCustomProviders(activeProviderId) {
+    if (!customProvidersList) return;
+    customProvidersList.innerHTML = '';
+
+    const st = await chrome.storage.local.get(null);
+    const currentActive = activeProviderId || st.activeProvider;
+
+    customProviders.forEach(p => {
+      const total = st[`tokens_${p.id}_total`] || p.totalTokens || 100;
+      const used = st[`tokens_${p.id}_used`] || p.usedTokens || 0;
+      const left = Math.max(0, total - used);
+      const leftPct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
+      const isActive = currentActive === p.id;
+
+      const card = document.createElement('div');
+      card.className = `provider-card custom-card ${isActive ? 'active-card' : ''}`;
+      card.id = `card-${p.id}`;
+
+      card.innerHTML = `
+        <div class="provider-top">
+          <div class="provider-identity">
+            <span class="provider-logo">${p.logo || '🤖'}</span>
+            <span class="provider-name">${p.name}</span>
+          </div>
+          <div class="status-badge connected">
+            <span class="dot"></span>
+            <span class="badge-text">Connected</span>
+          </div>
+        </div>
+
+        <div class="provider-actions">
+          <label class="provider-selection">
+            <input type="radio" name="active-provider" class="custom-radio-provider" value="${p.id}" ${isActive ? 'checked' : ''}>
+            <span>Active Provider</span>
+          </label>
+          <div class="provider-btn-group">
+            <button class="btn-change-key btn-key-custom" data-id="${p.id}" title="Add or update API key">+ Key</button>
+            <button class="btn-remove-custom" data-id="${p.id}" title="Remove this provider">✕</button>
+          </div>
+        </div>
+
+        <div class="key-input-row" id="key-row-${p.id}" style="display: none; margin-top: 8px;">
+          <input type="password" class="key-input" id="key-input-${p.id}" placeholder="Enter new API key...">
+          <button class="btn-save-key btn-save-key-custom" data-id="${p.id}">Save</button>
+        </div>
+
+        <!-- Dedicated stock / quota line for this custom provider -->
+        <div class="provider-quota-row">
+          <div class="provider-quota-meta">
+            <span>${p.name} Stock: <strong class="provider-quota-tokens">${left}</strong> left</span>
+            <span>${leftPct}% remaining</span>
+          </div>
+          <div class="provider-quota-bar">
+            <div class="provider-quota-fill custom" style="width: ${leftPct}%; ${leftPct <= 0 ? 'background: #ef4444;' : leftPct <= 20 ? 'background: #f59e0b;' : ''}"></div>
+          </div>
+        </div>
+      `;
+
+      // Event handlers for this custom card
+      const radio = card.querySelector('.custom-radio-provider');
+      radio.addEventListener('change', async () => {
+        if (radio.checked) {
+          await chrome.storage.local.set({ activeProvider: p.id });
+          currentActiveModelName = p.name;
+          renderTokenQuota(total, used, p.name);
+          renderCustomProviders(p.id);
+          // uncheck native radios
+          radioGemini.checked = false;
+          radioChatgpt.checked = false;
+          cardGemini.classList.remove('active-card');
+          cardChatgpt.classList.remove('active-card');
+        }
+      });
+
+      const btnKey = card.querySelector('.btn-key-custom');
+      const keyRow = card.querySelector(`#key-row-${p.id}`);
+      const keyInput = card.querySelector(`#key-input-${p.id}`);
+      const btnSave = card.querySelector(`.btn-save-key-custom`);
+
+      btnKey.addEventListener('click', () => {
+        keyRow.style.display = keyRow.style.display === 'none' ? 'flex' : 'none';
+        if (keyRow.style.display === 'flex') keyInput.focus();
+      });
+
+      btnSave.addEventListener('click', async () => {
+        const val = keyInput.value.trim();
+        if (val) {
+          p.apiKey = val;
+          await chrome.storage.local.set({ customProviders });
+          keyInput.value = '';
+          keyRow.style.display = 'none';
+          alert(`Updated API key for ${p.name}!`);
+        }
+      });
+
+      const btnRemove = card.querySelector('.btn-remove-custom');
+      btnRemove.addEventListener('click', async () => {
+        if (confirm(`Remove ${p.name} provider?`)) {
+          customProviders = customProviders.filter(item => item.id !== p.id);
+          await chrome.storage.local.set({ customProviders });
+          if (currentActive === p.id) {
+            await chrome.storage.local.set({ activeProvider: 'gemini' });
+          }
+          renderCustomProviders();
+          refreshAuthStatus(effectiveBackendUrl);
+        }
+      });
+
+      customProvidersList.appendChild(card);
+    });
+
+    if (currentActive && currentActive.startsWith('custom_')) {
+      const activeObj = customProviders.find(p => p.id === currentActive);
+      if (activeObj) {
+        const total = st[`tokens_${activeObj.id}_total`] || activeObj.totalTokens || 100;
+        const used = st[`tokens_${activeObj.id}_used`] || activeObj.usedTokens || 0;
+        currentActiveModelName = activeObj.name;
+        renderTokenQuota(total, used, activeObj.name);
       }
     }
   }
@@ -145,20 +380,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Render per-model lines initially
   renderModelQuotaLine('gemini', settings.tokensGeminiTotal || 100, settings.tokensGeminiUsed || 0);
   renderModelQuotaLine('chatgpt', settings.tokensChatgptTotal || 100, settings.tokensChatgptUsed || 0);
+  renderCustomProviders(settings.activeProvider);
 
   // Refill tokens button (refills all model stocks to 100)
   btnRefillTokens.addEventListener('click', async () => {
-    await chrome.storage.local.set({
+    const refillData = {
       totalTokens: 100,
       usedTokens: 0,
       tokensGeminiTotal: 100,
       tokensGeminiUsed: 0,
       tokensChatgptTotal: 100,
       tokensChatgptUsed: 0
+    };
+    customProviders.forEach(p => {
+      refillData[`tokens_${p.id}_total`] = 100;
+      refillData[`tokens_${p.id}_used`] = 0;
     });
+
+    await chrome.storage.local.set(refillData);
     renderTokenQuota(100, 0);
     renderModelQuotaLine('gemini', 100, 0);
     renderModelQuotaLine('chatgpt', 100, 0);
+    renderCustomProviders();
     usageStatusDesc.textContent = '🎉 All AI model packs refilled to 100 tokens (100% full)!';
   });
 
@@ -180,11 +423,17 @@ document.addEventListener('DOMContentLoaded', async () => {
    */
   async function refreshAuthStatus(backendUrl) {
     try {
+      const storageState = await chrome.storage.local.get(['activeProvider']);
       chrome.runtime.sendMessage({ action: 'AUTH_GET_STATUS', backendUrl }, (res) => {
         if (!res || !res.providers) return;
 
-        renderProviderCard('gemini', res.providers.gemini, res.active);
-        renderProviderCard('chatgpt', res.providers.chatgpt, res.active);
+        const effectiveActive = storageState.activeProvider 
+          ? { provider: storageState.activeProvider } 
+          : res.active;
+
+        renderProviderCard('gemini', res.providers.gemini, effectiveActive);
+        renderProviderCard('chatgpt', res.providers.chatgpt, effectiveActive);
+        renderCustomProviders(effectiveActive?.provider);
       });
     } catch (e) {
       console.warn('[Popup] Auth status query failed:', e.message);
@@ -436,8 +685,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   /**
    * Switch active provider via radio selection
    */
-  radioChatgpt.addEventListener('change', () => {
+  radioChatgpt.addEventListener('change', async () => {
     if (radioChatgpt.checked) {
+      await chrome.storage.local.set({ activeProvider: 'chatgpt' });
+      document.querySelectorAll('.custom-radio-provider').forEach(r => r.checked = false);
+      document.querySelectorAll('.custom-card').forEach(c => c.classList.remove('active-card'));
       chrome.runtime.sendMessage({ action: 'AUTH_SELECT_PROVIDER', provider: 'chatgpt', backendUrl: effectiveBackendUrl }, () => {
         refreshAuthStatus(effectiveBackendUrl);
         refreshServerHealth(effectiveBackendUrl);
@@ -445,8 +697,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  radioGemini.addEventListener('change', () => {
+  radioGemini.addEventListener('change', async () => {
     if (radioGemini.checked) {
+      await chrome.storage.local.set({ activeProvider: 'gemini' });
+      document.querySelectorAll('.custom-radio-provider').forEach(r => r.checked = false);
+      document.querySelectorAll('.custom-card').forEach(c => c.classList.remove('active-card'));
       chrome.runtime.sendMessage({ action: 'AUTH_SELECT_PROVIDER', provider: 'gemini', backendUrl: effectiveBackendUrl }, () => {
         refreshAuthStatus(effectiveBackendUrl);
         refreshServerHealth(effectiveBackendUrl);
