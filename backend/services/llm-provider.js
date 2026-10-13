@@ -728,8 +728,8 @@ export async function startAuthorization(provider, options = {}) {
       message: 'Redirect to Google OAuth consent screen'
     };
   } else if (key === 'chatgpt') {
-    // If backend has OpenAI API key configured, connect immediately
-    if (process.env.OPENAI_API_KEY) {
+    // In production/dev, if backend has OpenAI API key configured, connect immediately
+    if (process.env.NODE_ENV !== 'test' && process.env.OPENAI_API_KEY && !process.env.OPENAI_CLIENT_ID) {
       connectedAccounts.chatgpt = {
         status: 'connected',
         accessToken: process.env.OPENAI_API_KEY,
