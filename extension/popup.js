@@ -54,12 +54,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   const usageStatusDesc = document.getElementById('usage-status-desc');
   const btnRefillTokens = document.getElementById('btn-refill-tokens');
 
+  // Individual Model Tokens / Coins Elements
+  const tokensLeftGemini = document.getElementById('tokens-left-gemini');
+  const tokensPctGemini = document.getElementById('tokens-pct-gemini');
+  const quotaBarGemini = document.getElementById('quota-bar-gemini');
+
+  const tokensLeftChatgpt = document.getElementById('tokens-left-chatgpt');
+  const tokensPctChatgpt = document.getElementById('tokens-pct-chatgpt');
+  const quotaBarChatgpt = document.getElementById('quota-bar-chatgpt');
+
   // Load extension preferences & tokens
   const settings = await chrome.storage.local.get([
     'enabled',
     'backendUrl',
     'totalTokens',
     'usedTokens',
+    'tokensGeminiTotal',
+    'tokensGeminiUsed',
+    'tokensChatgptTotal',
+    'tokensChatgptUsed',
     'activeProvider'
   ]);
   let effectiveBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
@@ -71,6 +84,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   toggleEnabled.checked = settings.enabled !== false;
 
   let currentActiveModelName = 'Gemini';
+
+  // Render per-model quota line
+  function renderModelQuotaLine(model, total = 100, used = 0) {
+    const left = Math.max(0, total - used);
+    const leftPct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
+    const isGemini = model === 'gemini';
+
+    const tokensLeftEl = isGemini ? tokensLeftGemini : tokensLeftChatgpt;
+    const tokensPctEl = isGemini ? tokensPctGemini : tokensPctChatgpt;
+    const barEl = isGemini ? quotaBarGemini : quotaBarChatgpt;
+
+    if (tokensLeftEl) tokensLeftEl.textContent = left;
+    if (tokensPctEl) tokensPctEl.textContent = `${leftPct}% remaining`;
+    if (barEl) {
+      barEl.style.width = `${leftPct}%`;
+      if (leftPct <= 0) {
+        barEl.style.background = '#ef4444';
+      } else if (leftPct <= 20) {
+        barEl.style.background = '#f59e0b';
+      } else {
+        barEl.style.background = isGemini 
+          ? 'linear-gradient(90deg, #10b981, #06b6d4)' 
+          : 'linear-gradient(90deg, #3b82f6, #8b5cf6)';
+      }
+    }
+  }
 
   // Render tokens / credit stock with percentage used and remaining
   function renderTokenQuota(total = 100, used = 0, modelName = currentActiveModelName) {
@@ -103,11 +142,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   const initialUsed = settings.usedTokens || 0;
   renderTokenQuota(initialTotal, initialUsed);
 
-  // Refill tokens button
+  // Render per-model lines initially
+  renderModelQuotaLine('gemini', settings.tokensGeminiTotal || 100, settings.tokensGeminiUsed || 0);
+  renderModelQuotaLine('chatgpt', settings.tokensChatgptTotal || 100, settings.tokensChatgptUsed || 0);
+
+  // Refill tokens button (refills all model stocks to 100)
   btnRefillTokens.addEventListener('click', async () => {
-    await chrome.storage.local.set({ totalTokens: 100, usedTokens: 0 });
+    await chrome.storage.local.set({
+      totalTokens: 100,
+      usedTokens: 0,
+      tokensGeminiTotal: 100,
+      tokensGeminiUsed: 0,
+      tokensChatgptTotal: 100,
+      tokensChatgptUsed: 0
+    });
     renderTokenQuota(100, 0);
-    usageStatusDesc.textContent = '🎉 Pack refilled to 100 tokens (100% full)!';
+    renderModelQuotaLine('gemini', 100, 0);
+    renderModelQuotaLine('chatgpt', 100, 0);
+    usageStatusDesc.textContent = '🎉 All AI model packs refilled to 100 tokens (100% full)!';
   });
 
   // Initial loads

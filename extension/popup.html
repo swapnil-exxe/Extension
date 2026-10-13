@@ -248,6 +248,52 @@
       gap: 8px;
     }
 
+    .provider-quota-row {
+      margin-top: 8px;
+      padding-top: 7px;
+      border-top: 1px solid #33415566;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .provider-quota-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      color: #94a3b8;
+    }
+
+    .provider-quota-tokens {
+      font-weight: 700;
+      color: #38bdf8;
+    }
+
+    .provider-quota-bar {
+      width: 100%;
+      height: 4px;
+      background: #0f172a;
+      border-radius: 3px;
+      overflow: hidden;
+      border: 1px solid #33415588;
+    }
+
+    .provider-quota-fill {
+      height: 100%;
+      width: 100%;
+      border-radius: 2px;
+      transition: width 0.3s ease, background 0.3s ease;
+    }
+
+    .provider-quota-fill.gemini {
+      background: linear-gradient(90deg, #10b981, #06b6d4);
+    }
+
+    .provider-quota-fill.chatgpt {
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    }
+
     .provider-logo {
       font-size: 16px;
     }
@@ -637,6 +683,17 @@
         <button class="btn-save-key" id="btn-save-connected-gemini">Save</button>
       </div>
 
+      <!-- Gemini Individual Token Limit & Stock Line -->
+      <div class="provider-quota-row" id="quota-row-gemini">
+        <div class="provider-quota-meta">
+          <span>Gemini Stock: <strong class="provider-quota-tokens" id="tokens-left-gemini">100</strong> left</span>
+          <span id="tokens-pct-gemini">100% remaining</span>
+        </div>
+        <div class="provider-quota-bar">
+          <div class="provider-quota-fill gemini" id="quota-bar-gemini" style="width: 100%;"></div>
+        </div>
+      </div>
+
       <!-- Not Connected View -->
       <div class="provider-connect-block" id="connect-block-gemini">
         <button class="btn-connect-oauth" id="btn-connect-gemini">
@@ -678,6 +735,17 @@
       <div class="key-input-row" id="key-row-connected-chatgpt" style="display: none; margin-top: 8px;">
         <input type="password" class="key-input" id="key-input-connected-chatgpt" placeholder="sk-... (new OpenAI key)">
         <button class="btn-save-key" id="btn-save-connected-chatgpt">Save</button>
+      </div>
+
+      <!-- ChatGPT Individual Token Limit & Stock Line -->
+      <div class="provider-quota-row" id="quota-row-chatgpt">
+        <div class="provider-quota-meta">
+          <span>ChatGPT Stock: <strong class="provider-quota-tokens" id="tokens-left-chatgpt">100</strong> left</span>
+          <span id="tokens-pct-chatgpt">100% remaining</span>
+        </div>
+        <div class="provider-quota-bar">
+          <div class="provider-quota-fill chatgpt" id="quota-bar-chatgpt" style="width: 100%;"></div>
+        </div>
       </div>
 
       <!-- Not Connected View -->
