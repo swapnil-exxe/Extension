@@ -12,14 +12,17 @@ const MAX_CACHE_SIZE = 500;
 
 /**
  * Generate a deterministic hash key for question deduplication
+ * Incorporates question, options, image, provider, and model.
  */
-function computeCacheKey(payload) {
+function computeCacheKey(payload, provider = '', model = '') {
   const normalized = {
     platform: payload.platform || 'moodle',
     type: payload.questionType || 'single_choice',
     q: (payload.question || '').trim().toLowerCase(),
     opts: (payload.options || []).map(o => `${o.id}:${o.text.trim().toLowerCase()}`).sort(),
-    img: payload.image ? crypto.createHash('md5').update(payload.image).digest('hex') : null
+    img: payload.image ? crypto.createHash('md5').update(payload.image).digest('hex') : null,
+    provider: (payload.provider || provider || '').toLowerCase(),
+    model: (payload.model || model || '').toLowerCase()
   };
   return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }
@@ -59,7 +62,9 @@ router.post('/answer', async (req, res) => {
     }
 
     const payload = validation.data;
-    const cacheKey = computeCacheKey(payload);
+    const providerName = payload.provider || process.env.LLM_PROVIDER || 'mock';
+    const modelName = payload.model || (providerName === 'chatgpt' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : (process.env.GEMINI_MODEL || 'gemini-flash-lite-latest'));
+    const cacheKey = computeCacheKey(payload, providerName, modelName);
 
     // 2. Check if identical request is cached
     const cachedEntry = responseCache.get(cacheKey);

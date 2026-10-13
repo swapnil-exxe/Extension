@@ -161,16 +161,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 
 
+// Active request abort controller to cancel obsolete in-flight requests
+let activeRequestController = null;
+
 /**
  * Proxy question payload to Express backend
  */
 async function handleAnalyzeQuestion(payload) {
-  const { backendUrl = 'https://extension-w1ac.onrender.com' } = await chrome.storage.local.get(['backendUrl']);
+  // Cancel previous in-flight request if user moved to a new question
+  if (activeRequestController) {
+    try {
+      activeRequestController.abort();
+    } catch (e) {}
+  }
+  activeRequestController = new AbortController();
+  const currentController = activeRequestController;
+
+  const storage = await chrome.storage.local.get(['backendUrl', 'activeProvider']);
+  const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = backendUrl.replace(/\/+$/, '');
   const targetEndpoint = `${cleanUrl}/api/answer`;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  // Attach active provider if not already set in payload
+  if (!payload.provider && storage.activeProvider) {
+    payload.provider = storage.activeProvider;
+  }
+
+  // 12s timeout for fast response & timely fallback
+  const timeoutId = setTimeout(() => currentController.abort(), 12000);
 
   try {
     const response = await fetch(targetEndpoint, {
@@ -179,10 +197,13 @@ async function handleAnalyzeQuestion(payload) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload),
-      signal: controller.signal
+      signal: currentController.signal
     });
 
     clearTimeout(timeoutId);
+    if (activeRequestController === currentController) {
+      activeRequestController = null;
+    }
 
     if (!response.ok) {
       const errJson = await response.json().catch(() => ({}));

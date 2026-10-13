@@ -182,3 +182,55 @@ test('extractAndParseJSON parses raw text and markdown fences', () => {
   const withPreamble = 'Here is the answer:\n{"answer":"C","optionIds":["c"],"explanation":"test","confidence":0.9,"needsMoreContext":false}\nHope this helps!';
   assert.equal(extractAndParseJSON(withPreamble).answer, 'C');
 });
+
+test('POST /api/answer returns compact JSON with answerText, reason, latencyMs and status', async () => {
+  const payload = {
+    platform: 'moodle',
+    questionType: 'single_choice',
+    question: 'Solve for x: 2x + 4 = 10',
+    options: [
+      { id: 'opt_1', text: '2' },
+      { id: 'opt_2', text: '3' },
+      { id: 'opt_3', text: '4' }
+    ]
+  };
+
+  const res = await fetch(`${baseUrl}/api/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.ok(data.answer, 'Must have answer');
+  assert.ok(data.answerText, 'Must have answerText');
+  assert.ok(typeof data.latencyMs === 'number', 'Must measure latency');
+  assert.ok(data.status === 'ok' || data.status === 'success', 'Status must be valid');
+});
+
+test('Cache separates different providers and models for same question', async () => {
+  const q = 'Which sorting algorithm has worst case O(n^2)?';
+  const opts = [
+    { id: 'opt_a', text: 'Merge Sort' },
+    { id: 'opt_b', text: 'Bubble Sort' }
+  ];
+
+  // Request 1: Provider A
+  const res1 = await fetch(`${baseUrl}/api/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: q, options: opts, provider: 'gemini', model: 'gemini-2.0-flash-lite' })
+  });
+  const data1 = await res1.json();
+  assert.equal(data1.cached, false);
+
+  // Request 2: Same question, Different Provider (must NOT return stale cache from provider A)
+  const res2 = await fetch(`${baseUrl}/api/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: q, options: opts, provider: 'chatgpt', model: 'gpt-4o-mini' })
+  });
+  const data2 = await res2.json();
+  assert.equal(data2.cached, false);
+});

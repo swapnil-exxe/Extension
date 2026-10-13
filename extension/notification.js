@@ -194,19 +194,21 @@
     /**
      * Show answer notification with progressive 3-dot chunk expansion
      */
-    showAnswer({ option, answer }) {
+    showAnswer({ option, answer, status, confidence }) {
       this.createDOM();
       this.clearTimer();
 
       let text = '';
-      if (option && option.trim() && answer && answer.trim()) {
+      if (status === 'uncertain' || String(option).toUpperCase() === 'UNCERTAIN' || String(answer).toUpperCase().startsWith('UNCERTAIN')) {
+        text = 'UNCERTAIN — Question needs verification';
+      } else if (option && option.trim() && answer && answer.trim()) {
         text = `${option.trim()} — ${answer.trim()}`;
       } else if (answer && answer.trim()) {
         text = answer.trim();
       } else if (option && option.trim()) {
         text = option.trim();
       } else {
-        text = 'No answer found';
+        text = 'UNCERTAIN — Question needs verification';
       }
 
       this.fullText = text;

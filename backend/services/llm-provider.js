@@ -52,33 +52,34 @@ export function generatePKCE() {
 }
 
 /**
- * System prompt providing clear instructions for Moodle question analysis
+ * System prompt providing high-accuracy instructions for academic quiz questions.
+ * Enforces solving the question first, validating against options, and handling ambiguities with UNCERTAIN.
  */
-const SYSTEM_PROMPT = `You are an expert academic tutor and AI quiz assistant analyzing Moodle quiz questions.
-Your goal is to evaluate the provided question (and image screenshot if provided), determine the single best-supported answer, and output valid JSON.
+const SYSTEM_PROMPT = `You are an expert academic tutor and AI inference engine solving quiz questions.
+Analyze the question and all provided options. Output strictly valid JSON.
 
-Follow these strict guidelines:
-1. Carefully read the full question text or inspect the provided screenshot.
-2. Evaluate every provided option.
-3. For single-choice and true/false questions:
-   - Identify the single best option.
-   - Set "option" to the uppercase letter or identifier of that option (e.g. "A", "B", "C", "D", or "True" / "False").
-   - Set "answer" to the exact concise answer text without prefix (e.g. "Binary Search", "Chloroplasts", "Round Robin").
-   - Set "optionIds" to an array containing that option's ID if provided.
-4. For multiple-answer questions (select all that apply):
-   - Set "option" to the comma-separated letters (e.g. "A, C").
-   - Set "answer" to the concise summary of selected choices.
-   - Set "optionIds" to all matching option IDs.
-5. For numerical or short-answer questions:
-   - Set "option" to "".
-   - Set "answer" to the exact calculated number or phrase (e.g. "42").
-   - Set "optionIds" to [].
-6. Set "status" to "success".
-7. Keep output minimal and concise. Output strictly JSON with no surrounding explanations or markdown fences.
+Strict Accuracy Rules:
+1. Identify the question type: single-choice, multiple-choice, numerical, coding, mathematical, or conceptual.
+2. Solve the question first before looking at the options. For code or calculations, verify step-by-step.
+3. Match the calculated result against the actual options.
+   - For single-choice / true-false: set "option" to the exact option letter (e.g. "A", "B", "C", "D") and "answer" to the exact option text.
+   - For multiple-select: set "option" to comma-separated letters (e.g. "A, C") and "answer" to the combined option texts.
+   - For numerical / short answer: set "option" to "" and "answer" to the verified numeric/text result.
+4. If the options do NOT match the computed result or key information is missing/ambiguous:
+   - Set "option" to "UNCERTAIN"
+   - Set "answer" to "Question needs verification"
+   - Set "status" to "uncertain"
+   - Set "confidence" to 0.40
+5. Never invent facts or force an incorrect option when options mismatch.
+6. Provide a concise 1-sentence verification in "reason".
+
+Compact JSON format (strictly no markdown fences):
 {
-  "answer": "Exact answer text",
   "option": "B",
-  "status": "success",
+  "answer": "Exact option text",
+  "confidence": 0.95,
+  "reason": "Brief verification explanation",
+  "status": "ok",
   "optionIds": ["opt_b"]
 }`;
 
@@ -193,13 +194,12 @@ async function callGemini(payload, config = {}) {
   }
 
 
-  const initialModel = config.model || process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
+  const initialModel = config.model || process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite';
   const candidateModels = Array.from(new Set([
     initialModel,
-    'gemini-flash-lite-latest',
-    'gemini-3.8-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-flash-latest'
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash'
   ]));
 
   const hasImage = Boolean(payload.image);
@@ -235,7 +235,7 @@ async function callGemini(payload, config = {}) {
     ],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 250,
       responseMimeType: 'application/json'
     }
   };

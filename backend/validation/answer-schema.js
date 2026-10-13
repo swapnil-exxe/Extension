@@ -29,7 +29,10 @@ export const AnswerRequestSchema = z.object({
   questionType: z.string().default('single_choice'),
   question: z.string().default(''),
   options: z.array(OptionSchema).default([]),
-  image: z.string().optional() // base64 image data URL or raw base64 string
+  image: z.string().optional(), // base64 image data URL or raw base64 string
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  extractionDurationMs: z.number().optional()
 }).refine(data => (data.question && data.question.trim().length > 0) || (data.image && data.image.length > 0), {
   message: 'Either question text or image screenshot must be provided'
 });
@@ -40,13 +43,19 @@ export const AnswerRequestSchema = z.object({
  */
 export const AnswerResponseSchema = z.object({
   answer: z.string().min(1, 'Answer text is required'),
+  answerText: z.string().optional(),
   option: z.string().default(''),
-  status: z.string().default('success'),
+  status: z.string().default('ok'),
   optionIds: z.array(z.string()).default([]),
   explanation: z.string().default(''),
+  reason: z.string().optional(),
   confidence: z.number().min(0).max(1).default(0.90),
   needsMoreContext: z.boolean().default(false)
-});
+}).transform(val => ({
+  ...val,
+  answerText: val.answerText || val.answer,
+  reason: val.reason || val.explanation || ''
+}));
 
 /**
  * Validate incoming request payload

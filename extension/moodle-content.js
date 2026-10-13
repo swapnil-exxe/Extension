@@ -17,6 +17,12 @@
   let lastAnswer = null; // Temporary in-memory storage for Shift+A
   let isExtensionEnabled = true;
 
+  // Concurrency & Debounce controls
+  let activeAbortController = null;
+  let lastProcessedQuestionHash = null;
+  let lastSolveRequestTime = 0;
+  const DEBOUNCE_MS = 300;
+
   /**
    * Initialize content script adapter
    */
@@ -67,6 +73,18 @@
   }
 
   /**
+   * Simple string hash for question deduplication
+   */
+  function hashString(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return String(hash);
+  }
+
+  /**
    * Extract question and options directly from user's highlighted text selection ONLY
    */
   function extractFromSelection() {
@@ -76,7 +94,8 @@
     const rawText = selection.toString().trim();
     if (!rawText || rawText.length < 2) return null;
 
-    // Send strictly what the user selected with their mouse!
+    const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+
     // Check if selected text contains option lines
     function isOptionLine(line) {
       return /^(?:[A-Za-z][\.\:\)\-]|(?:\([A-Za-z0-9]\))|(?:\[[A-Za-z0-9]\])|\d+[\.\:\)\-])\s+/i.test(line) ||
@@ -495,12 +514,17 @@
   async function solveCurrentQuestion() {
     if (!isExtensionEnabled) return;
 
-    if (notification) notification.showStatus('Analyzing question...');
+    // 1. Debounce rapid key triggers (e.g. user holds down Shift+Z)
+    const now = Date.now();
+    if (now - lastSolveRequestTime < DEBOUNCE_MS) {
+      return;
+    }
+    lastSolveRequestTime = now;
 
-    // 1. Check user text selection first (e.g. highlighted text)
+    const extractStartTime = performance.now();
+
+    // 2. Extract question text and options
     let data = extractFromSelection();
-
-    // 2. If no text selection, check question container under cursor/focus
     if (!data) {
       const questionEl = getTargetQuestionElement();
       if (questionEl) {
@@ -508,20 +532,33 @@
       }
     }
 
-    // 3. If text extraction is still missing question text, auto-fallback to Vision Screenshot
+    const extractionDurationMs = Math.round(performance.now() - extractStartTime);
+
+    // 3. Fallback to Vision only if question is genuinely visual/empty text
     if (!data || !data.question || data.question.trim().length === 0) {
-      console.log('[Moodle AI] Question text not found, auto-falling back to Vision Screenshot...');
+      console.log(`[Moodle AI] Text empty (extracted in ${extractionDurationMs}ms), falling back to Vision Screenshot...`);
       return solveQuestionScreenshot();
     }
 
+    // 4. Duplicate request check (same question in flight or just solved)
+    const currentQuestionHash = hashString(data.question + (data.options || []).map(o => o.text).join(''));
+    if (lastAnswer && lastProcessedQuestionHash === currentQuestionHash && (now - lastSolveRequestTime < 2000)) {
+      if (notification) notification.showAnswer(lastAnswer);
+      return;
+    }
+
+    if (notification) notification.showStatus('Analyzing question...');
+
     try {
+      const startTime = performance.now();
       const response = await chrome.runtime.sendMessage({
         action: 'ANALYZE_QUESTION',
         payload: {
           platform: 'moodle',
           questionType: data.questionType || 'single_choice',
           question: data.question,
-          options: data.options || []
+          options: data.options || [],
+          extractionDurationMs
         }
       });
 
@@ -530,18 +567,25 @@
       }
 
       const res = response.data;
+      const totalClientDurationMs = Math.round(performance.now() - startTime);
+
       lastAnswer = {
         option: res.option || '',
-        answer: res.answer || ''
+        answer: res.answer || res.answerText || '',
+        confidence: res.confidence,
+        status: res.status || 'ok',
+        latencyMs: res.latencyMs || totalClientDurationMs
       };
+      lastProcessedQuestionHash = currentQuestionHash;
 
       if (notification) {
         notification.showAnswer(lastAnswer);
       }
     } catch (err) {
-      console.warn('[Moodle AI] Text solve error, falling back to Vision Screenshot:', err.message);
-      // Fallback to vision screenshot
-      solveQuestionScreenshot(data ? data.question : '', false);
+      console.error('[Moodle AI] Solve error:', err.message);
+      if (notification) {
+        notification.showError(err.message || 'Failed to solve question');
+      }
     }
   }
 
