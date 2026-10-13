@@ -49,7 +49,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load extension preferences
   const settings = await chrome.storage.local.get(['enabled', 'backendUrl']);
-  const effectiveBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
+  let effectiveBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
+  // If user had old localhost saved in browser storage, auto-migrate to live cloud backend
+  if (!settings.backendUrl || settings.backendUrl.includes('localhost') || settings.backendUrl.includes('127.0.0.1')) {
+    effectiveBackendUrl = 'https://extension-w1ac.onrender.com';
+    chrome.storage.local.set({ backendUrl: effectiveBackendUrl });
+  }
   toggleEnabled.checked = settings.enabled !== false;
 
   // Initial loads
@@ -155,6 +160,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (info?.error) {
           feedback.className = 'key-feedback error';
           feedback.textContent = info.error;
+          feedback.style.display = 'block';
+        } else {
+          feedback.style.display = 'none';
         }
         break;
 

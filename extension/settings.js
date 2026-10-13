@@ -26,7 +26,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (settings.notificationDuration) {
     selectDuration.value = String(settings.notificationDuration);
   }
-  inputBackendUrl.value = settings.backendUrl || 'https://extension-w1ac.onrender.com';
+  let currentBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
+  if (currentBackendUrl.includes('localhost') || currentBackendUrl.includes('127.0.0.1')) {
+    currentBackendUrl = 'https://extension-w1ac.onrender.com';
+    chrome.storage.local.set({ backendUrl: currentBackendUrl });
+  }
+  inputBackendUrl.value = currentBackendUrl;
 
   // Test connection button
   btnTestConnection.addEventListener('click', () => {
