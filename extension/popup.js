@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnSolve = document.getElementById('btn-trigger-solve');
   const btnRepeat = document.getElementById('btn-trigger-repeat');
 
-  // Token / Coins Counter Elements
+  // Token / Coins Counter Elements (if present)
   const usageRemaining = document.getElementById('usage-remaining');
   const usagePercentLeft = document.getElementById('usage-percent-left');
   const usageBarFill = document.getElementById('usage-bar-fill');
@@ -348,6 +348,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Render tokens / credit stock with percentage used and remaining
   function renderTokenQuota(total = 100, used = 0, modelName = currentActiveModelName) {
+    if (!usageRemaining || !usageBarFill) return;
+
     const left = Math.max(0, total - used);
     const leftPct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
     const usedPct = 100 - leftPct;
@@ -358,18 +360,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     usageBarFill.style.width = `${leftPct}%`;
 
-    if (leftPct <= 0) {
-      usageBarFill.style.background = '#ef4444';
-      usageStatusDesc.textContent = `❌ Out of tokens (100% used) • Refill required for ${modelName}`;
-      usageStatusDesc.style.color = '#f87171';
-    } else if (leftPct <= 20) {
-      usageBarFill.style.background = '#f59e0b';
-      usageStatusDesc.textContent = `⚠️ Low: ${usedPct}% used (${leftPct}% left) • Model: ${modelName}`;
-      usageStatusDesc.style.color = '#fbbf24';
-    } else {
-      usageBarFill.style.background = 'linear-gradient(90deg, #10b981, #3b82f6)';
-      usageStatusDesc.textContent = `⚡ ${usedPct}% used • ${leftPct}% left • Active Model: ${modelName}`;
-      usageStatusDesc.style.color = '#94a3b8';
+    if (usageStatusDesc) {
+      if (leftPct <= 0) {
+        usageBarFill.style.background = '#ef4444';
+        usageStatusDesc.textContent = `❌ Out of tokens (100% used) • Refill required for ${modelName}`;
+        usageStatusDesc.style.color = '#f87171';
+      } else if (leftPct <= 20) {
+        usageBarFill.style.background = '#f59e0b';
+        usageStatusDesc.textContent = `⚠️ Low: ${usedPct}% used (${leftPct}% left) • Model: ${modelName}`;
+        usageStatusDesc.style.color = '#fbbf24';
+      } else {
+        usageBarFill.style.background = 'linear-gradient(90deg, #10b981, #3b82f6)';
+        usageStatusDesc.textContent = `⚡ ${usedPct}% used • ${leftPct}% left • Active Model: ${modelName}`;
+        usageStatusDesc.style.color = '#94a3b8';
+      }
     }
   }
 
@@ -383,27 +387,31 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderCustomProviders(settings.activeProvider);
 
   // Refill tokens button (refills all model stocks to 100)
-  btnRefillTokens.addEventListener('click', async () => {
-    const refillData = {
-      totalTokens: 100,
-      usedTokens: 0,
-      tokensGeminiTotal: 100,
-      tokensGeminiUsed: 0,
-      tokensChatgptTotal: 100,
-      tokensChatgptUsed: 0
-    };
-    customProviders.forEach(p => {
-      refillData[`tokens_${p.id}_total`] = 100;
-      refillData[`tokens_${p.id}_used`] = 0;
-    });
+  if (btnRefillTokens) {
+    btnRefillTokens.addEventListener('click', async () => {
+      const refillData = {
+        totalTokens: 100,
+        usedTokens: 0,
+        tokensGeminiTotal: 100,
+        tokensGeminiUsed: 0,
+        tokensChatgptTotal: 100,
+        tokensChatgptUsed: 0
+      };
+      customProviders.forEach(p => {
+        refillData[`tokens_${p.id}_total`] = 100;
+        refillData[`tokens_${p.id}_used`] = 0;
+      });
 
-    await chrome.storage.local.set(refillData);
-    renderTokenQuota(100, 0);
-    renderModelQuotaLine('gemini', 100, 0);
-    renderModelQuotaLine('chatgpt', 100, 0);
-    renderCustomProviders();
-    usageStatusDesc.textContent = '🎉 All AI model packs refilled to 100 tokens (100% full)!';
-  });
+      await chrome.storage.local.set(refillData);
+      renderTokenQuota(100, 0);
+      renderModelQuotaLine('gemini', 100, 0);
+      renderModelQuotaLine('chatgpt', 100, 0);
+      renderCustomProviders();
+      if (usageStatusDesc) {
+        usageStatusDesc.textContent = '🎉 All AI model packs refilled to 100 tokens (100% full)!';
+      }
+    });
+  }
 
   // Initial loads
   await refreshServerHealth(effectiveBackendUrl);
