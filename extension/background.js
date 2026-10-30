@@ -6,7 +6,7 @@
 const DEFAULT_SETTINGS = {
   enabled: true,
   notificationPosition: 'top-right',
-  notificationDuration: 1000,
+  notificationDuration: 500,
   backendUrl: 'http://localhost:3001'
 };
 

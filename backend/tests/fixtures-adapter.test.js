@@ -348,3 +348,96 @@ test('MoodleScreenshotHandler: computes question crop rectangle accurately', () 
   assert.ok(rect.width > 400); // Has buffer padding
   assert.ok(rect.height > 150);
 });
+
+test('MoodleQuickNotification: default duration is 500ms and uses pure white theme', () => {
+  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
+    runScripts: 'dangerously',
+    url: 'http://localhost/'
+  });
+  dom.window.chrome = {
+    storage: { local: { get: () => Promise.resolve({}), set: () => Promise.resolve() } }
+  };
+  dom.window.eval(notificationCode);
+
+  const notifier = new dom.window.MoodleQuickNotification();
+  assert.equal(notifier.currentDurationMs, 500, 'Default notification duration must be 500ms');
+
+  notifier.showAnswer({ option: 'A', answer: 'Test Answer' });
+  const host = dom.window.document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Notification container must exist');
+  const styleEl = host.shadowRoot.querySelector('style');
+  assert.ok(styleEl.textContent.includes('background: #FFFFFF'));
+  assert.ok(styleEl.textContent.includes('color: #000000'));
+  assert.ok(styleEl.textContent.includes('border: 1px solid #E5E5E5'));
+});
+
+test('Question with 6 options (A-F) extracts all options accurately without loss', () => {
+  const html = `
+    <div class="que multichoice" id="q_six_opts">
+      <div class="formulation">
+        <div class="qtext">Which of the following sorting algorithms has worst-case time complexity of O(n log n)?</div>
+        <div class="answer">
+          <div class="r0"><label><input type="radio" name="q6" value="1"> Insertion Sort</label></div>
+          <div class="r1"><label><input type="radio" name="q6" value="2"> Bubble Sort</label></div>
+          <div class="r0"><label><input type="radio" name="q6" value="3"> Merge Sort</label></div>
+          <div class="r1"><label><input type="radio" name="q6" value="4"> Quick Sort</label></div>
+          <div class="r0"><label><input type="radio" name="q6" value="5"> Selection Sort</label></div>
+          <div class="r1"><label><input type="radio" name="q6" value="6"> Heap Sort</label></div>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { MoodleAdapter } = dom.window;
+
+  const tStart = performance.now();
+  const qEl = dom.window.document.getElementById('q_six_opts');
+  const extracted = MoodleAdapter.extractQuestionData(qEl);
+  const duration = performance.now() - tStart;
+
+  assert.ok(duration < 100, `DOM extraction must finish under 100ms (took ${duration.toFixed(2)}ms)`);
+  assert.equal(extracted.options.length, 6, 'Should extract all 6 options');
+  assert.ok(extracted.options[0].text.startsWith('A. Insertion Sort'));
+  assert.ok(extracted.options[2].text.startsWith('C. Merge Sort'));
+  assert.ok(extracted.options[5].text.startsWith('F. Heap Sort'));
+  assert.equal(extracted.questionType, 'dsa');
+});
+
+test('Superscripts and Subscripts are preserved in mathematical and complexity formulas', () => {
+  const html = `
+    <div class="que" id="q_math">
+      <div class="formulation">
+        <div class="qtext">The complexity is O(n<sup>2</sup>) and initial term is x<sub>0</sub>.</div>
+        <div class="answer">
+          <label><input type="radio" name="qm"> True</label>
+          <label><input type="radio" name="qm"> False</label>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { MoodleAdapter } = dom.window;
+
+  const qEl = dom.window.document.getElementById('q_math');
+  const extracted = MoodleAdapter.extractQuestionData(qEl);
+
+  assert.ok(extracted.question.includes('O(n^{2})'));
+  assert.ok(extracted.question.includes('x_{0}'));
+  assert.equal(extracted.questionType, 'true_false');
+});
+
+test('UI Theme Files verification: Popup and Settings use pure white #FFFFFF theme', () => {
+  const popupHtml = fs.readFileSync(path.resolve(__dirname, '../../extension/popup.html'), 'utf8');
+  const settingsHtml = fs.readFileSync(path.resolve(__dirname, '../../extension/settings.html'), 'utf8');
+
+  // Verify popup.html uses pure white theme
+  assert.ok(popupHtml.includes('background: #FFFFFF'));
+  assert.ok(popupHtml.includes('color: #000000'));
+  assert.ok(!popupHtml.includes('background: #0f172a'), 'Popup must not have dark background #0f172a');
+  assert.ok(!popupHtml.includes('background: #1e293b'), 'Popup must not have dark cards #1e293b');
+
+  // Verify settings.html uses pure white theme
+  assert.ok(settingsHtml.includes('background: #FFFFFF'));
+  assert.ok(settingsHtml.includes('color: #000000'));
+  assert.ok(!settingsHtml.includes('background: #09090b'), 'Settings must not have dark background #09090b');
+});

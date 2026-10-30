@@ -12,7 +12,7 @@
     constructor() {
       this.container = null;
       this.timerId = null;
-      this.currentDurationMs = 2000; // 2 seconds default for comfortable readability
+      this.currentDurationMs = 500; // 0.5s default for ultra-fast glance
       this.currentPosition = 'top-right';
 
       this.init();
@@ -25,7 +25,7 @@
           this.currentPosition = settings.notificationPosition;
         }
         if (settings.notificationDuration !== undefined) {
-          this.currentDurationMs = parseInt(settings.notificationDuration, 10) || 2000;
+          this.currentDurationMs = parseInt(settings.notificationDuration, 10) || 500;
         }
       } catch (err) {}
 
@@ -53,33 +53,33 @@
         }
         .quick-notify-box {
           display: none;
-          background: #09090b;
-          color: #f4f4f5;
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-          border-radius: 8px;
-          padding: 8px 16px;
+          background: #FFFFFF;
+          color: #000000;
+          border: 1px solid #E5E5E5;
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+          border-radius: 6px;
+          padding: 6px 12px;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 700;
-          letter-spacing: 0.3px;
-          line-height: 1.4;
+          letter-spacing: 0.2px;
+          line-height: 1.35;
           white-space: pre-wrap;
-          max-width: 480px;
+          max-width: 440px;
           pointer-events: auto;
           cursor: pointer;
           user-select: none;
-          transition: all 0.15s ease;
+          transition: opacity 0.15s ease, transform 0.15s ease;
         }
         .more-dots-btn {
           display: inline-block;
           margin-left: 6px;
-          padding: 1px 7px;
-          background: #27272a;
-          color: #38bdf8;
-          border: 1px solid rgba(56, 189, 248, 0.4);
+          padding: 1px 6px;
+          background: #F5F5F5;
+          color: #000000;
+          border: 1px solid #E5E5E5;
           border-radius: 4px;
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 800;
           letter-spacing: 1px;
           cursor: pointer;
@@ -87,24 +87,25 @@
           transition: background 0.15s, color 0.15s;
         }
         .more-dots-btn:hover {
-          background: #38bdf8;
-          color: #09090b;
+          background: #E5E5E5;
+          color: #000000;
         }
         .quick-notify-box.visible {
           display: inline-block;
         }
         .quick-notify-box.status {
-          background: #18181b;
-          color: #a1a1aa;
+          background: #FFFFFF;
+          color: #555555;
+          border: 1px solid #E5E5E5;
           font-weight: 500;
-          font-size: 13px;
+          font-size: 12px;
         }
         .quick-notify-box.error {
-          background: #450a0a;
-          color: #fecaca;
-          border-color: #991b1b;
+          background: #FFFFFF;
+          color: #991B1B;
+          border: 1px solid #E5E5E5;
           font-weight: 600;
-          font-size: 13px;
+          font-size: 12px;
         }
       `;
       shadow.appendChild(style);
@@ -165,7 +166,7 @@
     }
 
     setDuration(ms) {
-      this.currentDurationMs = Math.max(500, parseInt(ms, 10) || 2000);
+      this.currentDurationMs = Math.max(250, parseInt(ms, 10) || 500);
     }
 
     /**

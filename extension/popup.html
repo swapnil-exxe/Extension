@@ -15,8 +15,8 @@
     body {
       width: 335px;
       padding: 14px;
-      background: #0f172a;
-      color: #f8fafc;
+      background: #FFFFFF;
+      color: #000000;
       font-size: 13px;
     }
 
@@ -26,7 +26,7 @@
       align-items: center;
       justify-content: space-between;
       padding-bottom: 10px;
-      border-bottom: 1px solid #1e293b;
+      border-bottom: 1px solid #E5E5E5;
       margin-bottom: 12px;
     }
 
@@ -44,7 +44,7 @@
       font-weight: 800;
       font-size: 12px;
       letter-spacing: 0.5px;
-      color: #f8fafc;
+      color: #000000;
       text-transform: uppercase;
     }
 
@@ -62,7 +62,7 @@
       position: absolute;
       cursor: pointer;
       top: 0; left: 0; right: 0; bottom: 0;
-      background-color: #334155;
+      background-color: #E5E5E5;
       transition: .2s;
       border-radius: 18px;
     }
@@ -74,12 +74,13 @@
       width: 14px;
       left: 2px;
       bottom: 2px;
-      background-color: white;
+      background-color: #FFFFFF;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
       transition: .2s;
       border-radius: 50%;
     }
 
-    input:checked + .slider { background-color: #3b82f6; }
+    input:checked + .slider { background-color: #000000; }
     input:checked + .slider:before { transform: translateX(16px); }
 
     /* Primary Quick Action Button (Snip & Solve) */
@@ -89,9 +90,9 @@
 
     .btn-hero {
       width: 100%;
-      background: linear-gradient(135deg, #2563eb, #1d4ed8);
-      color: #ffffff;
-      border: 1px solid #3b82f6;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #E5E5E5;
       border-radius: 8px;
       padding: 10px 12px;
       font-size: 13px;
@@ -100,14 +101,13 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
       transition: all 0.15s ease;
     }
 
     .btn-hero:hover {
-      background: linear-gradient(135deg, #1d4ed8, #1e40af);
-      transform: translateY(-1px);
-      box-shadow: 0 6px 16px rgba(37, 99, 235, 0.35);
+      background: #F5F5F5;
+      border-color: #D4D4D4;
     }
 
     .btn-hero .hero-left {
@@ -117,9 +117,9 @@
     }
 
     .btn-hero .hero-kbd {
-      background: rgba(15, 23, 42, 0.6);
-      color: #93c5fd;
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: #F5F5F5;
+      color: #000000;
+      border: 1px solid #E5E5E5;
       border-radius: 4px;
       padding: 2px 6px;
       font-size: 11px;
@@ -137,19 +137,19 @@
     .section-title {
       font-size: 11px;
       font-weight: 700;
-      color: #94a3b8;
+      color: #555555;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
 
     .btn-add-provider {
-      background: #1e293b;
-      color: #38bdf8;
-      border: 1px solid #0284c7;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #E5E5E5;
       border-radius: 6px;
       padding: 3px 8px;
       font-size: 11px;
-      font-weight: 700;
+      font-weight: 600;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -158,15 +158,14 @@
     }
 
     .btn-add-provider:hover {
-      background: #0284c722;
-      border-color: #38bdf8;
-      color: #7dd3fc;
+      background: #F5F5F5;
+      border-color: #CCCCCC;
     }
 
     /* Custom Add Provider Box */
     .add-provider-form {
-      background: #0f172a;
-      border: 1px dashed #38bdf888;
+      background: #FFFFFF;
+      border: 1px dashed #CCCCCC;
       border-radius: 8px;
       padding: 10px;
       margin-bottom: 10px;
@@ -176,9 +175,9 @@
     }
 
     .add-provider-form input, .add-provider-form select {
-      background: #1e293b;
-      border: 1px solid #334155;
-      color: #f8fafc;
+      background: #FFFFFF;
+      border: 1px solid #E5E5E5;
+      color: #000000;
       border-radius: 6px;
       padding: 6px 8px;
       font-size: 11px;
@@ -186,7 +185,7 @@
     }
 
     .add-provider-form input:focus, .add-provider-form select:focus {
-      border-color: #38bdf8;
+      border-color: #000000;
     }
 
     .add-provider-actions {
@@ -196,24 +195,31 @@
     }
 
     .btn-submit-provider {
-      background: #0284c7;
-      color: white;
-      border: none;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #000000;
       border-radius: 6px;
       padding: 5px 10px;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
+    }
+    .btn-submit-provider:hover {
+      background: #F5F5F5;
     }
 
     .btn-cancel-provider {
-      background: transparent;
-      color: #94a3b8;
-      border: 1px solid #475569;
+      background: #FFFFFF;
+      color: #555555;
+      border: 1px solid #E5E5E5;
       border-radius: 6px;
       padding: 5px 8px;
       font-size: 11px;
       cursor: pointer;
+    }
+    .btn-cancel-provider:hover {
+      background: #F5F5F5;
+      color: #000000;
     }
 
     /* Provider Cards */
@@ -225,16 +231,16 @@
     }
 
     .provider-card {
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: #FFFFFF;
+      border: 1px solid #E5E5E5;
       border-radius: 8px;
       padding: 10px 12px;
       transition: border-color 0.15s, background-color 0.15s;
     }
 
     .provider-card.active-card {
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 1px #3b82f6;
+      border-color: #000000;
+      box-shadow: 0 0 0 1px #000000;
     }
 
     .provider-top {
@@ -253,7 +259,7 @@
     .provider-quota-row {
       margin-top: 8px;
       padding-top: 7px;
-      border-top: 1px solid #33415566;
+      border-top: 1px solid #E5E5E5;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -264,21 +270,21 @@
       justify-content: space-between;
       align-items: center;
       font-size: 10px;
-      color: #94a3b8;
+      color: #555555;
     }
 
     .provider-quota-tokens {
       font-weight: 700;
-      color: #38bdf8;
+      color: #000000;
     }
 
     .provider-quota-bar {
       width: 100%;
       height: 4px;
-      background: #0f172a;
+      background: #F5F5F5;
       border-radius: 3px;
       overflow: hidden;
-      border: 1px solid #33415588;
+      border: 1px solid #E5E5E5;
     }
 
     .provider-quota-fill {
@@ -286,24 +292,25 @@
       width: 100%;
       border-radius: 2px;
       transition: width 0.3s ease, background 0.3s ease;
+      background: #000000;
     }
 
     .provider-quota-fill.gemini {
-      background: linear-gradient(90deg, #10b981, #06b6d4);
+      background: #059669;
     }
 
     .provider-quota-fill.chatgpt {
-      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      background: #2563EB;
     }
 
     .provider-quota-fill.custom {
-      background: linear-gradient(90deg, #ec4899, #f59e0b);
+      background: #4B5563;
     }
 
     .btn-remove-custom {
-      background: transparent;
-      color: #ef4444;
-      border: 1px solid #ef444444;
+      background: #FFFFFF;
+      color: #DC2626;
+      border: 1px solid #FECACA;
       border-radius: 6px;
       padding: 4px 6px;
       font-size: 11px;
@@ -311,8 +318,8 @@
       transition: all 0.15s;
     }
     .btn-remove-custom:hover {
-      background: #ef444422;
-      border-color: #ef4444;
+      background: #FEE2E2;
+      border-color: #DC2626;
     }
 
     .provider-logo {
@@ -322,7 +329,7 @@
     .provider-name {
       font-weight: 600;
       font-size: 13px;
-      color: #f1f5f9;
+      color: #000000;
     }
 
     .status-badge {
@@ -333,53 +340,53 @@
       font-weight: 600;
       padding: 2px 7px;
       border-radius: 12px;
-      background: #0f172a;
-      color: #94a3b8;
-      border: 1px solid #334155;
+      background: #F5F5F5;
+      color: #555555;
+      border: 1px solid #E5E5E5;
     }
 
     .status-badge .dot {
       width: 6px;
       height: 6px;
       border-radius: 50%;
-      background: #64748b;
+      background: #9CA3AF;
     }
 
     .status-badge.connected {
-      color: #34d399;
-      border-color: #065f46;
-      background: #064e3b33;
+      color: #166534;
+      border-color: #BBF7D0;
+      background: #F0FDF4;
     }
     .status-badge.connected .dot {
-      background: #10b981;
+      background: #16A34A;
     }
 
     .status-badge.connecting {
-      color: #60a5fa;
-      border-color: #1e40af;
-      background: #1e3a8a33;
+      color: #1E40AF;
+      border-color: #BFDBFE;
+      background: #EFF6FF;
     }
     .status-badge.connecting .dot {
-      background: #3b82f6;
+      background: #2563EB;
       animation: pulse 1s infinite alternate;
     }
 
     .status-badge.expired {
-      color: #fbbf24;
-      border-color: #92400e;
-      background: #78350f33;
+      color: #B45309;
+      border-color: #FDE68A;
+      background: #FFFBEB;
     }
     .status-badge.expired .dot {
-      background: #f59e0b;
+      background: #D97706;
     }
 
     .status-badge.error {
-      color: #f87171;
-      border-color: #991b1b;
-      background: #7f1d1d33;
+      color: #991B1B;
+      border-color: #FECACA;
+      background: #FEF2F2;
     }
     .status-badge.error .dot {
-      background: #ef4444;
+      background: #DC2626;
     }
 
     @keyframes pulse {
@@ -390,13 +397,13 @@
     /* Buttons */
     .btn-connect-oauth {
       width: 100%;
-      background: #2563eb;
-      color: white;
-      border: none;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #000000;
       border-radius: 6px;
       padding: 7px 10px;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -406,7 +413,7 @@
     }
 
     .btn-connect-oauth:hover {
-      background: #1d4ed8;
+      background: #F5F5F5;
     }
 
     .btn-connect-oauth:disabled {
@@ -427,14 +434,14 @@
       gap: 6px;
       cursor: pointer;
       font-size: 12px;
-      color: #cbd5e1;
+      color: #000000;
       font-weight: 600;
       user-select: none;
     }
 
     .provider-selection input[type="radio"] {
       cursor: pointer;
-      accent-color: #3b82f6;
+      accent-color: #000000;
     }
 
     .provider-btn-group {
@@ -444,9 +451,9 @@
     }
 
     .btn-change-key {
-      background: #1e293b;
-      color: #93c5fd;
-      border: 1px solid #3b82f644;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #E5E5E5;
       border-radius: 6px;
       padding: 4px 8px;
       font-size: 11px;
@@ -456,15 +463,14 @@
     }
 
     .btn-change-key:hover {
-      background: #2563eb22;
-      border-color: #3b82f6;
-      color: #bfdbfe;
+      background: #F5F5F5;
+      border-color: #000000;
     }
 
     .btn-disconnect {
-      background: transparent;
-      color: #94a3b8;
-      border: 1px solid #475569;
+      background: #FFFFFF;
+      color: #555555;
+      border: 1px solid #E5E5E5;
       border-radius: 6px;
       padding: 4px 8px;
       font-size: 11px;
@@ -473,21 +479,21 @@
     }
 
     .btn-disconnect:hover {
-      color: #ef4444;
-      border-color: #ef4444;
-      background: #ef444415;
+      color: #991B1B;
+      border-color: #EF4444;
+      background: #FEF2F2;
     }
 
     .key-toggle-link {
       font-size: 10px;
-      color: #64748b;
+      color: #555555;
       text-decoration: underline;
       cursor: pointer;
       margin-top: 6px;
       display: inline-block;
     }
     .key-toggle-link:hover {
-      color: #94a3b8;
+      color: #000000;
     }
 
     .key-input-row {
@@ -498,9 +504,9 @@
 
     .key-input {
       flex: 1;
-      background: #0f172a;
-      border: 1px solid #334155;
-      color: #f8fafc;
+      background: #FFFFFF;
+      border: 1px solid #E5E5E5;
+      color: #000000;
       border-radius: 6px;
       padding: 6px 8px;
       font-size: 11px;
@@ -509,24 +515,24 @@
     }
 
     .key-input:focus {
-      border-color: #3b82f6;
+      border-color: #000000;
     }
 
     .btn-save-key {
-      background: #334155;
-      color: white;
-      border: none;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #000000;
       border-radius: 6px;
       padding: 6px 10px;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
       white-space: nowrap;
       transition: background 0.15s;
     }
 
     .btn-save-key:hover {
-      background: #475569;
+      background: #F5F5F5;
     }
 
     .key-feedback {
@@ -538,13 +544,13 @@
       border-radius: 4px;
     }
     .key-feedback.error {
-      color: #f87171;
-      background: #7f1d1d22;
-      border: 1px solid #991b1b44;
+      color: #991B1B;
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
       display: block;
     }
     .key-feedback.info {
-      color: #94a3b8;
+      color: #555555;
       display: block;
     }
 
@@ -560,8 +566,8 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      background: #1e293b;
-      border: 1px solid #334155;
+      background: #FFFFFF;
+      border: 1px solid #E5E5E5;
       border-radius: 6px;
       padding: 6px 9px;
       cursor: pointer;
@@ -569,20 +575,20 @@
     }
 
     .shortcut-item:hover {
-      background: #273549;
-      border-color: #475569;
+      background: #F5F5F5;
+      border-color: #CCCCCC;
     }
 
     .shortcut-label {
       font-size: 11px;
-      color: #cbd5e1;
+      color: #000000;
       font-weight: 500;
     }
 
     .kbd {
-      background: #0f172a;
-      color: #38bdf8;
-      border: 1px solid #334155;
+      background: #F5F5F5;
+      color: #000000;
+      border: 1px solid #E5E5E5;
       border-radius: 4px;
       padding: 2px 5px;
       font-size: 10px;
@@ -595,7 +601,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-top: 1px solid #1e293b;
+      border-top: 1px solid #E5E5E5;
       padding-top: 8px;
       font-size: 11px;
     }
@@ -604,21 +610,21 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      color: #94a3b8;
+      color: #555555;
     }
 
     .status-dot {
       width: 7px;
       height: 7px;
       border-radius: 50%;
-      background: #64748b;
+      background: #9CA3AF;
     }
 
-    .status-dot.online { background: #10b981; }
-    .status-dot.offline { background: #ef4444; }
+    .status-dot.online { background: #16A34A; }
+    .status-dot.offline { background: #DC2626; }
 
     .settings-link {
-      color: #60a5fa;
+      color: #000000;
       text-decoration: none;
       font-weight: 600;
       cursor: pointer;
@@ -626,7 +632,6 @@
 
     .settings-link:hover {
       text-decoration: underline;
-      color: #93c5fd;
     }
   </style>
 </head>

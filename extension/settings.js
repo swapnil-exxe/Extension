@@ -23,8 +23,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (settings.notificationPosition) {
     selectPosition.value = settings.notificationPosition;
   }
-  if (settings.notificationDuration) {
+  if (settings.notificationDuration !== undefined) {
     selectDuration.value = String(settings.notificationDuration);
+  } else {
+    selectDuration.value = '500';
   }
   let currentBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
   if (currentBackendUrl.includes('localhost') || currentBackendUrl.includes('127.0.0.1')) {

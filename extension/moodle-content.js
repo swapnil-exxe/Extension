@@ -21,7 +21,8 @@
   let activeAbortController = null;
   let lastProcessedQuestionHash = null;
   let lastSolveRequestTime = 0;
-  const DEBOUNCE_MS = 300;
+  let currentRequestId = 0;
+  const DEBOUNCE_MS = 250;
 
   /**
    * Initialize content script adapter
@@ -232,15 +233,50 @@
   }
 
   /**
-   * Get all question containers on the page
+   * Helper to determine if an element is genuinely visible on page
+   */
+  function isElementVisible(el) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    if (el.hidden || el.getAttribute('aria-hidden') === 'true') return false;
+
+    if (typeof window.getComputedStyle === 'function') {
+      try {
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') {
+          return false;
+        }
+      } catch (e) {}
+    }
+
+    const isJSDOM = typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent || '');
+    if (!isJSDOM) {
+      if (el.offsetParent === null && el.style.position !== 'fixed' && el.style.position !== 'sticky') {
+        return false;
+      }
+      const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (rect && rect.width <= 0 && rect.height <= 0) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Get all question containers on the page (filtered to visible ones)
    */
   function getQuestionContainers() {
     let list = Array.from(document.querySelectorAll('.que'));
-    if (list.length > 0) return list;
+    if (list.length > 0) {
+      const visible = list.filter(isElementVisible);
+      return visible.length > 0 ? visible : list;
+    }
 
     list = Array.from(document.querySelectorAll('[data-question-id], .question-container, .formulation, [class*="quiz-question"], [class*="question-card"], fieldset, .quiz-card'));
     if (list.length > 0) {
-      return Array.from(new Set(list.map(el => el.closest('.que') || el)));
+      const unique = Array.from(new Set(list.map(el => el.closest('.que') || el)));
+      const visible = unique.filter(isElementVisible);
+      return visible.length > 0 ? visible : unique;
     }
 
     // Dynamic grouping by radio inputs
@@ -267,7 +303,9 @@
     }
 
     if (containers.length > 0) {
-      return Array.from(new Set(containers));
+      const unique = Array.from(new Set(containers));
+      const visible = unique.filter(isElementVisible);
+      return visible.length > 0 ? visible : unique;
     }
 
     // Fallback: Check elements with numbers like "1. ", "8. "
@@ -277,11 +315,13 @@
     });
 
     const headingContainers = headings.map(h => findQuestionContainerFromElement(h) || h.parentElement).filter(Boolean);
-    return Array.from(new Set(headingContainers));
+    const uniqueHeadings = Array.from(new Set(headingContainers));
+    const visibleHeadings = uniqueHeadings.filter(isElementVisible);
+    return visibleHeadings.length > 0 ? visibleHeadings : uniqueHeadings;
   }
 
   /**
-   * Determine target question (selected text, under cursor, focused, or visible in viewport)
+   * Determine target question (selected text, active focus, under cursor, or most visible in viewport)
    */
   function getTargetQuestionElement() {
     // 1. Check user text selection anchor
@@ -291,44 +331,70 @@
         ? selection.anchorNode
         : selection.anchorNode.parentElement;
       const q = findQuestionContainerFromElement(anchorEl);
-      if (q) return q;
+      if (q && isElementVisible(q)) return q;
     }
 
-    // 2. Check under cursor
+    // 2. Check document activeElement focus (keyboard navigation or radio/input click)
+    if (document.activeElement && document.activeElement !== document.body && document.activeElement !== document.documentElement) {
+      const q = findQuestionContainerFromElement(document.activeElement);
+      if (q && isElementVisible(q)) return q;
+    }
+
+    // 3. Check under cursor
     if (elementUnderMouse) {
       const q = findQuestionContainerFromElement(elementUnderMouse);
-      if (q) return q;
+      if (q && isElementVisible(q)) return q;
     }
 
-    // 3. Check focused / clicked question
-    if (activeQuestionElement && document.body.contains(activeQuestionElement)) {
-      return activeQuestionElement;
+    // 4. Check active/clicked question in memory
+    if (activeQuestionElement && document.body.contains(activeQuestionElement) && isElementVisible(activeQuestionElement)) {
+      const rect = activeQuestionElement.getBoundingClientRect();
+      if (rect.bottom > 20 && rect.top < (window.innerHeight || 800) - 20) {
+        return activeQuestionElement;
+      }
     }
 
-    // 4. Check viewport center
-    const questions = getQuestionContainers();
+    // 5. Scan all visible question containers and determine the most prominent one in viewport
+    const questions = getQuestionContainers().filter(isElementVisible);
     if (questions.length === 0) return null;
 
-    const viewportCenter = window.innerHeight / 2;
-    let closest = null;
-    let minDistance = Infinity;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+    const viewportCenter = viewportHeight / 2;
+
+    let bestQuestion = null;
+    let maxVisibleHeight = 0;
+    let minCenterDistance = Infinity;
 
     for (const q of questions) {
       const rect = q.getBoundingClientRect();
-      if (rect.bottom > 30 && rect.top < window.innerHeight - 30) {
-        const dist = Math.abs(rect.top + rect.height / 2 - viewportCenter);
-        if (dist < minDistance) {
-          minDistance = dist;
-          closest = q;
+      const visibleTop = Math.max(0, rect.top);
+      const visibleBottom = Math.min(viewportHeight, rect.bottom);
+      const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+
+      if (visibleHeight > 0) {
+        const qCenter = visibleTop + visibleHeight / 2;
+        const distFromCenter = Math.abs(qCenter - viewportCenter);
+
+        if (visibleHeight > maxVisibleHeight * 1.25 || (Math.abs(visibleHeight - maxVisibleHeight) <= 40 && distFromCenter < minCenterDistance)) {
+          maxVisibleHeight = visibleHeight;
+          minCenterDistance = distFromCenter;
+          bestQuestion = q;
         }
       }
     }
 
-    return closest || questions[0];
+    if (bestQuestion) return bestQuestion;
+
+    // Fallback: If containers are found (single question or test environment without layout metrics), return first
+    if (questions.length > 0) {
+      return questions[0];
+    }
+
+    return null;
   }
 
   /**
-   * Cleanly format text preserving math and code
+   * Cleanly format text preserving math, code, equations, and tables
    */
   function extractFormattedText(element) {
     if (!element) return '';
@@ -342,6 +408,7 @@
       script.replaceWith(span);
     });
 
+    // MathML
     clone.querySelectorAll('math').forEach(math => {
       const alt = math.getAttribute('alttext') || math.textContent;
       const span = document.createElement('span');
@@ -352,6 +419,18 @@
     // KaTeX
     clone.querySelectorAll('.katex-mathml').forEach(katex => {
       katex.replaceWith(document.createTextNode(` \\(${katex.textContent}\\) `));
+    });
+
+    // Superscripts & Subscripts (equations, powers, Big-O complexities)
+    clone.querySelectorAll('sup').forEach(sup => {
+      const span = document.createElement('span');
+      span.textContent = `^{${sup.textContent}}`;
+      sup.replaceWith(span);
+    });
+    clone.querySelectorAll('sub').forEach(sub => {
+      const span = document.createElement('span');
+      span.textContent = `_{${sub.textContent}}`;
+      sub.replaceWith(span);
     });
 
     // Code
@@ -408,6 +487,23 @@
       }
     }
 
+
+    // 1b. Detect images, diagrams, SVGs, or Canvas
+    const diagrams = [];
+    questionEl.querySelectorAll('img, svg, canvas').forEach(diag => {
+      if (diag.classList.contains('icon') || diag.getAttribute('role') === 'presentation') return;
+      const rect = diag.getBoundingClientRect ? diag.getBoundingClientRect() : null;
+      if (rect && (rect.width < 18 || rect.height < 18)) return;
+
+      const alt = diag.getAttribute('alt') || diag.getAttribute('title') || diag.getAttribute('aria-label') || '';
+      if (alt.trim()) {
+        diagrams.push(alt.trim());
+      }
+    });
+
+    if (diagrams.length > 0 && !questionText.includes('[Diagram:')) {
+      questionText += `\n[Diagram / Visual: ${diagrams.join('; ')}]`;
+    }
 
     const noElem = questionEl.querySelector('.info .no');
     const questionNumber = noElem ? noElem.textContent.replace(/[^\d]/g, '') : (questionEl.id || '').replace(/[^\d]/g, '') || '1';
@@ -485,12 +581,18 @@
 
     const hasCheckboxes = questionEl.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length > 0;
     const isTrueFalse = options.length === 2 && options.some(o => /true/i.test(o.text)) && options.some(o => /false/i.test(o.text));
+    const isDSA = /\b(time complexity|space complexity|big-o|recurrence|binary search|merge sort|quicksort|dynamic programming|dijkstra|graph|bfs|dfs|heap|tree)\b/i.test(questionText);
+    const isCoding = /```|public static|def |function\(|int main/i.test(questionText) || questionEl.querySelector('pre, code') !== null;
 
     let questionType = 'single_choice';
     if (isTrueFalse || questionEl.classList.contains('truefalse')) {
       questionType = 'true_false';
     } else if (hasCheckboxes) {
       questionType = 'multiple_choice';
+    } else if (isCoding) {
+      questionType = 'coding';
+    } else if (isDSA) {
+      questionType = 'dsa';
     } else if (options.length === 0) {
       if (questionEl.classList.contains('numerical') || questionEl.querySelector('.numerical') || /calculate|sum|\bmath\b|\d+\s*[\+\-\*\/]\s*\d+/i.test(questionText)) {
         questionType = 'numerical';
@@ -503,6 +605,7 @@
       platform: 'moodle',
       questionNumber,
       questionType,
+      hasDiagram: diagrams.length > 0,
       question: questionText || 'Answer the following question',
       options
     };
@@ -514,7 +617,7 @@
   async function solveCurrentQuestion() {
     if (!isExtensionEnabled) return;
 
-    // 1. Debounce rapid key triggers (e.g. user holds down Shift+Z)
+    // 1. Debounce rapid key triggers
     const now = Date.now();
     if (now - lastSolveRequestTime < DEBOUNCE_MS) {
       return;
@@ -534,18 +637,30 @@
 
     const extractionDurationMs = Math.round(performance.now() - extractStartTime);
 
-    // 3. Fallback to Vision only if question is genuinely visual/empty text
-    if (!data || !data.question || data.question.trim().length === 0) {
+    // 3. If no active question could be confidently detected, report error instead of guessing
+    if (!data || (!data.question && (!data.options || data.options.length === 0))) {
+      console.warn('[Moodle AI] Could not confidently identify active question.');
+      if (notification) {
+        notification.showError('UNCERTAIN — Question needs verification');
+      }
+      return;
+    }
+
+    // 4. Fallback to Vision only if question is genuinely visual/empty text
+    if (!data.question || data.question.trim().length === 0) {
       console.log(`[Moodle AI] Text empty (extracted in ${extractionDurationMs}ms), falling back to Vision Screenshot...`);
       return solveQuestionScreenshot();
     }
 
-    // 4. Duplicate request check (same question in flight or just solved)
+    // 5. Duplicate request check (same question just solved)
     const currentQuestionHash = hashString(data.question + (data.options || []).map(o => o.text).join(''));
     if (lastAnswer && lastProcessedQuestionHash === currentQuestionHash && (now - lastSolveRequestTime < 2000)) {
       if (notification) notification.showAnswer(lastAnswer);
       return;
     }
+
+    // Cancel / invalidate obsolete in-flight requests
+    const thisRequestId = ++currentRequestId;
 
     if (notification) notification.showStatus('Analyzing question...');
 
@@ -561,6 +676,11 @@
           extractionDurationMs
         }
       });
+
+      // Discard obsolete response if another question was triggered while waiting
+      if (thisRequestId !== currentRequestId) {
+        return;
+      }
 
       if (!response || !response.success || !response.data) {
         throw new Error(response ? response.error : 'No response from backend');
@@ -582,6 +702,7 @@
         notification.showAnswer(lastAnswer);
       }
     } catch (err) {
+      if (thisRequestId !== currentRequestId) return;
       console.error('[Moodle AI] Solve error:', err.message);
       if (notification) {
         notification.showError(err.message || 'Failed to solve question');

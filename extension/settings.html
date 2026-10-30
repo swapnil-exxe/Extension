@@ -13,8 +13,8 @@
     }
 
     body {
-      background: #f8fafc;
-      color: #1e293b;
+      background: #FFFFFF;
+      color: #000000;
       font-size: 14px;
       line-height: 1.5;
       padding: 32px 16px;
@@ -39,27 +39,27 @@
     .header-title {
       font-size: 20px;
       font-weight: 700;
-      color: #0f172a;
+      color: #000000;
     }
 
     .header-sub {
-      color: #64748b;
+      color: #555555;
       font-size: 13px;
     }
 
     .card {
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
+      background: #FFFFFF;
+      border: 1px solid #E5E5E5;
+      border-radius: 8px;
       padding: 20px;
       margin-bottom: 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     }
 
     .card-title {
       font-size: 15px;
-      font-weight: 600;
-      color: #0f172a;
+      font-weight: 700;
+      color: #000000;
       margin-bottom: 4px;
       display: flex;
       align-items: center;
@@ -67,7 +67,7 @@
     }
 
     .card-desc {
-      color: #64748b;
+      color: #555555;
       font-size: 12px;
       margin-bottom: 16px;
     }
@@ -84,23 +84,23 @@
       display: block;
       font-weight: 600;
       font-size: 13px;
-      color: #334155;
+      color: #000000;
       margin-bottom: 6px;
     }
 
     .form-input, .form-select {
       width: 100%;
       padding: 9px 12px;
-      border: 1px solid #cbd5e1;
+      border: 1px solid #E5E5E5;
       border-radius: 6px;
-      font-size: 14px;
-      color: #1e293b;
-      background: #ffffff;
+      font-size: 13px;
+      color: #000000;
+      background: #FFFFFF;
     }
 
     .form-input:focus, .form-select:focus {
       outline: none;
-      border-color: #0f172a;
+      border-color: #000000;
     }
 
     .btn-row {
@@ -116,27 +116,36 @@
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      border: none;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #E5E5E5;
       transition: all 0.15s;
     }
 
+    .btn:hover {
+      background: #F5F5F5;
+    }
+
     .btn-primary {
-      background: #0f172a;
-      color: #ffffff;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #000000;
+      font-weight: 700;
     }
 
     .btn-primary:hover {
-      background: #334155;
+      background: #F5F5F5;
     }
 
     .btn-secondary {
-      background: #f1f5f9;
-      color: #334155;
-      border: 1px solid #cbd5e1;
+      background: #FFFFFF;
+      color: #555555;
+      border: 1px solid #E5E5E5;
     }
 
     .btn-secondary:hover {
-      background: #e2e8f0;
+      background: #F5F5F5;
+      color: #000000;
     }
 
     .status-box {
@@ -149,16 +158,16 @@
 
     .status-box.success {
       display: block;
-      background: #ecfdf5;
-      border: 1px solid #a7f3d0;
-      color: #065f46;
+      background: #FFFFFF;
+      border: 1px solid #10B981;
+      color: #065F46;
     }
 
     .status-box.error {
       display: block;
-      background: #fef2f2;
-      border: 1px solid #fecaca;
-      color: #991b1b;
+      background: #FFFFFF;
+      border: 1px solid #EF4444;
+      color: #991B1B;
     }
 
     .shortcut-table {
@@ -170,12 +179,14 @@
 
     .shortcut-table td {
       padding: 8px 0;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid #E5E5E5;
+      color: #000000;
     }
 
     .kbd {
-      background: #09090b;
-      color: #f4f4f5;
+      background: #F5F5F5;
+      color: #000000;
+      border: 1px solid #E5E5E5;
       border-radius: 4px;
       padding: 3px 7px;
       font-family: monospace;
@@ -187,11 +198,14 @@
       position: fixed;
       bottom: 24px;
       right: 24px;
-      background: #09090b;
-      color: #ffffff;
+      background: #FFFFFF;
+      color: #000000;
+      border: 1px solid #E5E5E5;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
       padding: 10px 18px;
-      border-radius: 8px;
+      border-radius: 6px;
       font-size: 13px;
+      font-weight: 600;
       opacity: 0;
       transform: translateY(10px);
       transition: all 0.2s ease;
@@ -232,7 +246,8 @@
       <div class="form-group">
         <label class="form-label" for="select-duration">Disappearance Duration</label>
         <select id="select-duration" class="form-select">
-          <option value="1000">1.0 second (Default)</option>
+          <option value="500" selected>0.5 seconds (Default - Fast)</option>
+          <option value="1000">1.0 second</option>
           <option value="1500">1.5 seconds</option>
           <option value="2000">2.0 seconds</option>
           <option value="3000">3.0 seconds</option>

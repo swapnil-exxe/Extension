@@ -212,13 +212,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (barEl) {
       barEl.style.width = `${leftPct}%`;
       if (leftPct <= 0) {
-        barEl.style.background = '#ef4444';
+        barEl.style.background = '#DC2626';
       } else if (leftPct <= 20) {
-        barEl.style.background = '#f59e0b';
+        barEl.style.background = '#D97706';
       } else {
-        barEl.style.background = isGemini 
-          ? 'linear-gradient(90deg, #10b981, #06b6d4)' 
-          : 'linear-gradient(90deg, #3b82f6, #8b5cf6)';
+        barEl.style.background = isGemini ? '#059669' : '#2563EB';
       }
     }
   }
