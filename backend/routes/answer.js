@@ -22,7 +22,8 @@ function computeCacheKey(payload, provider = '', model = '') {
     opts: (payload.options || []).map(o => `${o.id}:${o.text.trim().toLowerCase()}`).sort(),
     img: payload.image ? crypto.createHash('md5').update(payload.image).digest('hex') : null,
     provider: (payload.provider || provider || '').toLowerCase(),
-    model: (payload.model || model || '').toLowerCase()
+    model: (payload.model || model || '').toLowerCase(),
+    apiKey: payload.apiKey ? payload.apiKey.slice(-8) : null
   };
   return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }

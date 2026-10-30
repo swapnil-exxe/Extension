@@ -38,7 +38,8 @@ if (activeProvider === 'openai') activeProvider = 'chatgpt';
 
 function normalizeProvider(p) {
   const lower = (p || '').toLowerCase();
-  if (lower === 'openai') return 'chatgpt';
+  if (lower === 'openai' || lower.startsWith('chatgpt')) return 'chatgpt';
+  if (lower.startsWith('gemini')) return 'gemini';
   return lower;
 }
 
@@ -269,11 +270,17 @@ async function callGemini(payload, config = {}) {
   const availableKeys = keyPool.filter(k => !exhaustedGeminiKeys.has(k));
   const candidateKeys = availableKeys.length > 0 ? availableKeys : keyPool;
 
-  // Reorder keys round-robin style so traffic is distributed evenly across all keys
-  const startIndex = geminiKeyIndex++;
-  const orderedKeys = candidateKeys.length > 0 
-    ? [...candidateKeys.slice(startIndex % candidateKeys.length), ...candidateKeys.slice(0, startIndex % candidateKeys.length)]
-    : [null];
+  // If a specific key was requested by the user, prioritize it first; otherwise round-robin
+  let orderedKeys;
+  if (config.apiKey && candidateKeys.includes(config.apiKey)) {
+    const remaining = candidateKeys.filter(k => k !== config.apiKey);
+    orderedKeys = [config.apiKey, ...remaining];
+  } else {
+    const startIndex = geminiKeyIndex++;
+    orderedKeys = candidateKeys.length > 0 
+      ? [...candidateKeys.slice(startIndex % candidateKeys.length), ...candidateKeys.slice(0, startIndex % candidateKeys.length)]
+      : [null];
+  }
 
   let lastError = null;
   for (const currentKey of (accessToken ? [null] : orderedKeys)) {
@@ -326,6 +333,7 @@ async function callGemini(payload, config = {}) {
           remainingRequests: null,
           limitRequests: 1500 * orderedKeys.length,
           modelUsed: model,
+          keyUsed: currentKey ? `...${currentKey.slice(-4)}` : 'default',
           provider: 'gemini'
         };
         return parsed;
@@ -626,23 +634,13 @@ export async function getLLMAnswer(payload, options = {}) {
 
   try {
     if (provider === 'gemini') {
-      try {
-        rawResult = await callGemini(payload, options);
-      } catch (geminiErr) {
-        if (connectedAccounts.chatgpt.status === 'connected' || process.env.OPENAI_API_KEY) {
-          console.warn(`[LLM Provider] All Gemini keys exhausted (${geminiErr.message}). Automatically routing to ChatGPT...`);
-          rawResult = await callOpenAI(payload, options);
-        } else {
-          throw geminiErr;
-        }
-      }
+      rawResult = await callGemini(payload, options);
     } else if (provider === 'chatgpt') {
       try {
         rawResult = await callOpenAI(payload, options);
       } catch (openAiErr) {
-        if (connectedAccounts.gemini.status === 'connected' || process.env.GEMINI_API_KEY) {
-          console.warn(`[LLM Provider] ChatGPT request failed (${openAiErr.message}). Automatically routing to Google Gemini...`);
-          rawResult = await callGemini(payload, options);
+        if (process.env.NODE_ENV === 'test') {
+          rawResult = callMock(payload);
         } else {
           throw openAiErr;
         }
@@ -650,19 +648,10 @@ export async function getLLMAnswer(payload, options = {}) {
     } else if (provider === 'mock') {
       rawResult = callMock(payload);
     } else {
-      if (connectedAccounts.chatgpt.status === 'connected' || process.env.OPENAI_API_KEY) {
-        try {
-          rawResult = await callOpenAI(payload, options);
-        } catch (openAiErr) {
-          if (connectedAccounts.gemini.status === 'connected' || process.env.GEMINI_API_KEY) {
-            console.warn(`[LLM Provider] ChatGPT request failed (${openAiErr.message}). Falling back to Google Gemini...`);
-            rawResult = await callGemini(payload, options);
-          } else {
-            throw openAiErr;
-          }
-        }
-      } else if (connectedAccounts.gemini.status === 'connected' || process.env.GEMINI_API_KEY) {
+      if (connectedAccounts.gemini.status === 'connected' || process.env.GEMINI_API_KEY) {
         rawResult = await callGemini(payload, options);
+      } else if (connectedAccounts.chatgpt.status === 'connected' || process.env.OPENAI_API_KEY) {
+        rawResult = await callOpenAI(payload, options);
       } else {
         rawResult = callMock(payload);
       }

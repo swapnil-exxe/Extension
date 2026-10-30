@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   inputBackendUrl.value = currentBackendUrl;
 
   // Test connection button
-  btnTestConnection.addEventListener('click', () => {
+  btnTestConnection.addEventListener('click', async () => {
     const testUrl = inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com';
     statusBox.className = 'status-box';
     statusBox.style.display = 'block';
@@ -48,13 +48,49 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }, 2500);
 
+    const st = await chrome.storage.local.get(['activeProvider', 'customProviders']);
+    const activeKey = st.activeProvider || 'gemini_1';
+
+    const PROVIDER_NAMES = {
+      gemini_1: 'Gemini (Key 1)',
+      gemini_2: 'Gemini (Key 2)',
+      gemini_3: 'Gemini (Key 3)',
+      gemini_4: 'Gemini (Key 4)',
+      gemini: 'Gemini',
+      chatgpt: 'ChatGPT',
+      openai: 'ChatGPT'
+    };
+
+    const MODEL_NAMES = {
+      gemini_1: 'gemini-3.5-flash',
+      gemini_2: 'gemini-3.5-flash',
+      gemini_3: 'gemini-3.5-flash',
+      gemini_4: 'gemini-3.5-flash',
+      gemini: 'gemini-3.5-flash',
+      chatgpt: 'gpt-4o-mini',
+      openai: 'gpt-4o-mini'
+    };
+
+    const isCustom = activeKey.startsWith('custom_');
+    const customObj = isCustom ? (st.customProviders || []).find(p => p.id === activeKey) : null;
+    const activeDisplayName = isCustom ? (customObj?.name || 'Custom AI') : (PROVIDER_NAMES[activeKey] || 'AI');
+    const activeModelName = isCustom ? (customObj?.model || 'custom') : (MODEL_NAMES[activeKey] || 'gemini-3.5-flash');
+
+    // Sync selected provider with backend
+    const backendProvider = activeKey.startsWith('gemini') ? 'gemini' : (activeKey === 'chatgpt' || activeKey === 'openai' ? 'chatgpt' : activeKey);
+    chrome.runtime.sendMessage({
+      action: 'AUTH_SELECT_PROVIDER',
+      provider: backendProvider,
+      backendUrl: testUrl
+    });
+
     chrome.runtime.sendMessage({ action: 'CHECK_BACKEND_STATUS', backendUrl: testUrl }, (res) => {
       clearTimeout(wakeNoticeTimer);
       if (res && res.ok) {
         statusBox.className = 'status-box success';
         statusBox.innerHTML = `
           <strong>✅ Connected Successfully!</strong><br>
-          Latency: <strong>${res.latencyMs}ms</strong> • Provider: <strong>${res.provider || 'AI'}</strong> • Uptime: ${res.uptimeSeconds}s
+          Latency: <strong>${res.latencyMs}ms</strong> • Active AI: <strong>${activeDisplayName}</strong> • Model: <strong>${activeModelName}</strong> • Uptime: ${res.uptimeSeconds}s
         `;
       } else {
         statusBox.className = 'status-box error';

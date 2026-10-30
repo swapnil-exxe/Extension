@@ -177,7 +177,8 @@ async function handleAnalyzeQuestion(payload) {
   activeRequestController = new AbortController();
   const currentController = activeRequestController;
 
-  const storage = await chrome.storage.local.get(['backendUrl', 'activeProvider']);
+  const storage = await chrome.storage.local.get(['backendUrl', 'activeProvider', 'customProviders']);
+  const customProviders = storage.customProviders || [];
   const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = backendUrl.replace(/\/+$/, '');
   const targetEndpoint = `${cleanUrl}/api/answer`;
@@ -189,12 +190,25 @@ async function handleAnalyzeQuestion(payload) {
     gemini_4: 'AQ.Ab8RN6Kr25hFpdJ7q7Q4PDOZV_cERl0ARAJdr0v7KMMED3fkUg'
   };
 
+  const CHATGPT_KEY = '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';
+
   // Attach active provider and specific key if selected
   const selectedProvider = payload.provider || storage.activeProvider || 'gemini_1';
   if (selectedProvider.startsWith('gemini')) {
     payload.provider = 'gemini';
     if (GEMINI_KEYS[selectedProvider]) {
       payload.apiKey = GEMINI_KEYS[selectedProvider];
+    }
+  } else if (selectedProvider === 'chatgpt' || selectedProvider === 'openai') {
+    payload.provider = 'chatgpt';
+    payload.apiKey = CHATGPT_KEY;
+  } else if (selectedProvider.startsWith('custom_')) {
+    const custom = customProviders.find(p => p.id === selectedProvider);
+    if (custom) {
+      payload.provider = 'custom';
+      payload.apiKey = custom.apiKey;
+      payload.endpoint = custom.endpoint;
+      payload.model = custom.model;
     }
   } else {
     payload.provider = selectedProvider;

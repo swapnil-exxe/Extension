@@ -65,7 +65,7 @@ function getHealthPayload() {
   const activeProvider = activeInfo.provider;
   const activeModel = activeProvider === 'chatgpt' || activeProvider === 'openai'
     ? (process.env.OPENAI_MODEL || 'gpt-4o-mini')
-    : (process.env.GEMINI_MODEL || 'gemini-flash-latest');
+    : (process.env.GEMINI_MODEL || 'gemini-3.5-flash');
 
   return {
     status: 'ok',

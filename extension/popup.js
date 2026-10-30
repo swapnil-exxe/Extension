@@ -13,35 +13,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Hero Screenshot Button
   const btnHeroVision = document.getElementById('btn-hero-vision');
 
-  // Gemini Elements
-  const cardGemini = document.getElementById('card-gemini');
-  const badgeGemini = document.getElementById('badge-gemini');
-  const statusGemini = document.getElementById('status-gemini');
-  const actionsGemini = document.getElementById('actions-gemini');
-  const radioGemini = document.getElementById('radio-gemini');
-  const btnDisconnectGemini = document.getElementById('btn-disconnect-gemini');
-  const connectBlockGemini = document.getElementById('connect-block-gemini');
-  const btnConnectGemini = document.getElementById('btn-connect-gemini');
-  const feedbackGemini = document.getElementById('feedback-gemini');
-  const toggleKeyGemini = document.getElementById('toggle-key-gemini');
-  const keyRowGemini = document.getElementById('key-row-gemini');
-  const keyInputGemini = document.getElementById('key-input-gemini');
-  const btnSaveGemini = document.getElementById('btn-save-gemini');
-
-  // ChatGPT Elements
-  const cardChatgpt = document.getElementById('card-chatgpt');
-  const badgeChatgpt = document.getElementById('badge-chatgpt');
-  const statusChatgpt = document.getElementById('status-chatgpt');
-  const actionsChatgpt = document.getElementById('actions-chatgpt');
-  const radioChatgpt = document.getElementById('radio-chatgpt');
-  const btnDisconnectChatgpt = document.getElementById('btn-disconnect-chatgpt');
-  const connectBlockChatgpt = document.getElementById('connect-block-chatgpt');
-  const btnConnectChatgpt = document.getElementById('btn-connect-chatgpt');
-  const feedbackChatgpt = document.getElementById('feedback-chatgpt');
-  const toggleKeyChatgpt = document.getElementById('toggle-key-chatgpt');
-  const keyRowChatgpt = document.getElementById('key-row-chatgpt');
-  const keyInputChatgpt = document.getElementById('key-input-chatgpt');
-  const btnSaveChatgpt = document.getElementById('btn-save-chatgpt');
 
   // Shortcut action buttons
   const btnSolve = document.getElementById('btn-trigger-solve');
@@ -234,12 +205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (radio.checked) {
           await chrome.storage.local.set({ activeProvider: p.id });
           currentActiveModelName = p.name;
-          renderCustomProviders(p.id);
-          // uncheck native radios
-          radioGemini.checked = false;
-          radioChatgpt.checked = false;
-          cardGemini.classList.remove('active-card');
-          cardChatgpt.classList.remove('active-card');
+          highlightActiveProvider(p.id);
         }
       });
 
@@ -290,6 +256,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  const PROVIDER_DISPLAY_NAMES = {
+    gemini_1: 'Gemini (Key 1)',
+    gemini_2: 'Gemini (Key 2)',
+    gemini_3: 'Gemini (Key 3)',
+    gemini_4: 'Gemini (Key 4)',
+    gemini: 'Gemini',
+    chatgpt: 'ChatGPT',
+    openai: 'ChatGPT'
+  };
+
+  let lastReportedLatency = 80;
+
+  function updateFooterProviderStatus(providerId, latency) {
+    if (latency !== undefined && latency !== null) {
+      lastReportedLatency = latency;
+    }
+    const displayName = PROVIDER_DISPLAY_NAMES[providerId] || providerId || 'AI';
+    if (serverText) {
+      serverText.textContent = `Online (${displayName} • ${lastReportedLatency}ms)`;
+    }
+  }
+
   function highlightActiveProvider(val) {
     const allCards = document.querySelectorAll('.provider-card');
     allCards.forEach(c => c.classList.remove('active-card'));
@@ -297,6 +285,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (targetCard) targetCard.classList.add('active-card');
     const targetRadio = document.querySelector(`input[name="active-provider"][value="${val}"]`);
     if (targetRadio) targetRadio.checked = true;
+    updateFooterProviderStatus(val);
   }
 
   // Handle all provider radio selections (all 4 Gemini keys, ChatGPT, and custom providers)
@@ -305,6 +294,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       const selected = e.target.value;
       await chrome.storage.local.set({ activeProvider: selected });
       highlightActiveProvider(selected);
+
+      // Notify backend server of the switch
+      const backendProvider = selected.startsWith('gemini') ? 'gemini' : selected;
+      chrome.runtime.sendMessage({
+        action: 'AUTH_SELECT_PROVIDER',
+        provider: backendProvider,
+        backendUrl: effectiveBackendUrl
+      });
     }
   });
 
@@ -325,332 +322,56 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Allow clicking anywhere on a provider card to select it
+  document.addEventListener('click', (e) => {
+    const card = e.target.closest('.provider-card');
+    if (!card) return;
+    if (e.target.closest('button') || e.target.tagName === 'INPUT' || e.target.closest('a') || e.target.closest('.key-tag')) return;
+    const radio = card.querySelector('input[name="active-provider"]');
+    if (radio && !radio.checked) {
+      radio.checked = true;
+      radio.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+
   // Initial loads
   await refreshServerHealth(effectiveBackendUrl);
 
-  // Poll status periodically while popup is open (to update when user completes OAuth in tab)
+  // Poll server health periodically while popup is open
   const pollInterval = setInterval(() => {
-    refreshAuthStatus(effectiveBackendUrl);
-  }, 2000);
+    refreshServerHealth(effectiveBackendUrl);
+  }, 4000);
 
   window.addEventListener('unload', () => {
     clearInterval(pollInterval);
   });
 
   /**
-   * Fetch and render connection status for both ChatGPT and Gemini
-   */
-  async function refreshAuthStatus(backendUrl) {
-    try {
-      const storageState = await chrome.storage.local.get(['activeProvider']);
-      chrome.runtime.sendMessage({ action: 'AUTH_GET_STATUS', backendUrl }, (res) => {
-        if (!res || !res.providers) return;
-
-        const effectiveActive = storageState.activeProvider 
-          ? { provider: storageState.activeProvider } 
-          : res.active;
-
-        renderProviderCard('gemini', res.providers.gemini, effectiveActive);
-        renderProviderCard('chatgpt', res.providers.chatgpt, effectiveActive);
-        renderCustomProviders(effectiveActive?.provider);
-      });
-    } catch (e) {
-      console.warn('[Popup] Auth status query failed:', e.message);
-    }
-  }
-
-  /**
-   * Render a provider's card according to its state
-   */
-  function renderProviderCard(provider, info, activeInfo) {
-    const isGpt = provider === 'chatgpt';
-    const card = isGpt ? cardChatgpt : cardGemini;
-    const badge = isGpt ? badgeChatgpt : badgeGemini;
-    const statusText = isGpt ? statusChatgpt : statusGemini;
-    const actions = isGpt ? actionsChatgpt : actionsGemini;
-    const radio = isGpt ? radioChatgpt : radioGemini;
-    const connectBlock = isGpt ? connectBlockChatgpt : connectBlockGemini;
-    const btnConnect = isGpt ? btnConnectChatgpt : btnConnectGemini;
-    const feedback = isGpt ? feedbackChatgpt : feedbackGemini;
-
-    const rawStatus = (info?.status || 'not_connected').toLowerCase();
-    const isActive = activeInfo && (activeInfo.provider === provider || (isGpt && activeInfo.provider === 'openai'));
-
-    // Highlight active card
-    if (isActive) {
-      card.classList.add('active-card');
-      radio.checked = true;
-      currentActiveModelName = isGpt ? 'ChatGPT (GPT-4o-mini)' : 'Gemini (Flash-Lite)';
-    } else {
-      card.classList.remove('active-card');
-      radio.checked = false;
-    }
-
-    // Reset badge classes
-    badge.className = 'status-badge';
-
-    // Reset button disabled state & text cleanly
-    if (rawStatus !== 'connecting') {
-      btnConnect.disabled = false;
-      btnConnect.querySelector('span').textContent = `Connect ${isGpt ? 'ChatGPT' : 'Gemini'}`;
-    }
-
-    switch (rawStatus) {
-      case 'connected':
-        badge.classList.add('connected');
-        statusText.textContent = 'Connected';
-        actions.style.display = 'flex';
-        connectBlock.style.display = 'none';
-        feedback.style.display = 'none';
-        break;
-
-      case 'connecting':
-        badge.classList.add('connecting');
-        statusText.textContent = 'Connecting...';
-        actions.style.display = 'none';
-        connectBlock.style.display = 'block';
-        btnConnect.disabled = true;
-        btnConnect.querySelector('span').textContent = 'Connecting...';
-        break;
-
-      case 'expired':
-        badge.classList.add('expired');
-        statusText.textContent = 'Expired';
-        actions.style.display = 'none';
-        connectBlock.style.display = 'block';
-        btnConnect.disabled = false;
-        btnConnect.querySelector('span').textContent = `Reconnect ${isGpt ? 'ChatGPT' : 'Gemini'}`;
-        feedback.className = 'key-feedback error';
-        feedback.textContent = 'Session expired. Please reconnect.';
-        break;
-
-      case 'error':
-        badge.classList.add('error');
-        statusText.textContent = 'Error';
-        actions.style.display = 'none';
-        connectBlock.style.display = 'block';
-        btnConnect.disabled = false;
-        btnConnect.querySelector('span').textContent = `Connect ${isGpt ? 'ChatGPT' : 'Gemini'}`;
-        if (info?.error) {
-          feedback.className = 'key-feedback error';
-          feedback.textContent = info.error;
-          feedback.style.display = 'block';
-        } else {
-          feedback.style.display = 'none';
-        }
-        break;
-
-      case 'not_connected':
-      default:
-        statusText.textContent = 'Not connected';
-        actions.style.display = 'none';
-        connectBlock.style.display = 'block';
-        btnConnect.disabled = false;
-        btnConnect.querySelector('span').textContent = `Connect ${isGpt ? 'ChatGPT' : 'Gemini'}`;
-        feedback.style.display = 'none';
-        break;
-    }
-  }
-
-  /**
-   * OAuth Connect button handlers
-   */
-  btnConnectGemini.addEventListener('click', () => {
-    btnConnectGemini.disabled = true;
-    btnConnectGemini.querySelector('span').textContent = 'Connecting...';
-    badgeGemini.className = 'status-badge connecting';
-    statusGemini.textContent = 'Connecting';
-
-    chrome.runtime.sendMessage({ action: 'AUTH_START', provider: 'gemini', backendUrl: effectiveBackendUrl }, (res) => {
-      btnConnectGemini.disabled = false;
-      btnConnectGemini.querySelector('span').textContent = 'Connect Gemini';
-
-      if (res && res.error) {
-        feedbackGemini.className = 'key-feedback error';
-        feedbackGemini.textContent = res.error;
-      }
-      refreshAuthStatus(effectiveBackendUrl);
-      refreshServerHealth(effectiveBackendUrl);
-    });
-  });
-
-  btnConnectChatgpt.addEventListener('click', () => {
-    btnConnectChatgpt.disabled = true;
-    btnConnectChatgpt.querySelector('span').textContent = 'Connecting...';
-    badgeChatgpt.className = 'status-badge connecting';
-    statusChatgpt.textContent = 'Connecting';
-
-    chrome.runtime.sendMessage({ action: 'AUTH_START', provider: 'chatgpt', backendUrl: effectiveBackendUrl }, (res) => {
-      btnConnectChatgpt.disabled = false;
-      btnConnectChatgpt.querySelector('span').textContent = 'Connect ChatGPT';
-
-      if (res && res.error) {
-        feedbackChatgpt.className = 'key-feedback error';
-        feedbackChatgpt.textContent = res.error;
-      }
-      refreshAuthStatus(effectiveBackendUrl);
-      refreshServerHealth(effectiveBackendUrl);
-    });
-  });
-
-  /**
-   * Disconnect button handlers
-   */
-  btnDisconnectGemini.addEventListener('click', () => {
-    btnDisconnectGemini.disabled = true;
-    chrome.runtime.sendMessage({ action: 'AUTH_DISCONNECT', provider: 'gemini', backendUrl: effectiveBackendUrl }, () => {
-      refreshAuthStatus(effectiveBackendUrl);
-      refreshServerHealth(effectiveBackendUrl);
-    });
-  });
-
-  btnDisconnectChatgpt.addEventListener('click', () => {
-    btnDisconnectChatgpt.disabled = true;
-    chrome.runtime.sendMessage({ action: 'AUTH_DISCONNECT', provider: 'chatgpt', backendUrl: effectiveBackendUrl }, () => {
-      refreshAuthStatus(effectiveBackendUrl);
-      refreshServerHealth(effectiveBackendUrl);
-    });
-  });
-
-  /**
-   * Save API Key Handler (Supported fallback)
-   */
-  async function saveKey(provider, inputElem, btnElem, feedbackElem) {
-    const key = inputElem.value.trim();
-    if (!key) {
-      feedbackElem.className = 'key-feedback error';
-      feedbackElem.textContent = 'Please enter a valid key.';
-      return;
-    }
-
-    btnElem.disabled = true;
-    btnElem.textContent = 'Testing...';
-    feedbackElem.className = 'key-feedback info';
-    feedbackElem.textContent = 'Testing key with server...';
-
-    chrome.runtime.sendMessage(
-      { action: 'AUTH_SAVE_KEY', provider, apiKey: key, backendUrl: effectiveBackendUrl },
-      (res) => {
-        btnElem.disabled = false;
-        btnElem.textContent = 'Save';
-
-        if (!res || !res.success) {
-          feedbackElem.className = 'key-feedback error';
-          feedbackElem.textContent = res?.error || 'Invalid API key or network error.';
-        } else {
-          inputElem.value = '';
-          feedbackElem.style.display = 'none';
-          refreshAuthStatus(effectiveBackendUrl);
-          refreshServerHealth(effectiveBackendUrl);
-        }
-      }
-    );
-  }
-
-  btnSaveGemini.addEventListener('click', () => {
-    saveKey('gemini', keyInputGemini, btnSaveGemini, feedbackGemini);
-  });
-  btnSaveChatgpt.addEventListener('click', () => {
-    saveKey('chatgpt', keyInputChatgpt, btnSaveChatgpt, feedbackChatgpt);
-  });
-
-  // Connected Key change buttons & inputs
-  const btnToggleKeyConnectedGemini = document.getElementById('btn-toggle-key-connected-gemini');
-  const keyRowConnectedGemini = document.getElementById('key-row-connected-gemini');
-  const keyInputConnectedGemini = document.getElementById('key-input-connected-gemini');
-  const btnSaveConnectedGemini = document.getElementById('btn-save-connected-gemini');
-
-  const btnToggleKeyConnectedChatgpt = document.getElementById('btn-toggle-key-connected-chatgpt');
-  const keyRowConnectedChatgpt = document.getElementById('key-row-connected-chatgpt');
-  const keyInputConnectedChatgpt = document.getElementById('key-input-connected-chatgpt');
-  const btnSaveConnectedChatgpt = document.getElementById('btn-save-connected-chatgpt');
-
-  if (btnToggleKeyConnectedGemini) {
-    btnToggleKeyConnectedGemini.addEventListener('click', () => {
-      keyRowConnectedGemini.style.display = keyRowConnectedGemini.style.display === 'none' ? 'flex' : 'none';
-      if (keyRowConnectedGemini.style.display === 'flex') keyInputConnectedGemini.focus();
-    });
-  }
-
-  if (btnSaveConnectedGemini) {
-    btnSaveConnectedGemini.addEventListener('click', () => {
-      saveKey('gemini', keyInputConnectedGemini, btnSaveConnectedGemini, feedbackGemini);
-    });
-  }
-
-  if (btnToggleKeyConnectedChatgpt) {
-    btnToggleKeyConnectedChatgpt.addEventListener('click', () => {
-      keyRowConnectedChatgpt.style.display = keyRowConnectedChatgpt.style.display === 'none' ? 'flex' : 'none';
-      if (keyRowConnectedChatgpt.style.display === 'flex') keyInputConnectedChatgpt.focus();
-    });
-  }
-
-  if (btnSaveConnectedChatgpt) {
-    btnSaveConnectedChatgpt.addEventListener('click', () => {
-      saveKey('chatgpt', keyInputConnectedChatgpt, btnSaveConnectedChatgpt, feedbackChatgpt);
-    });
-  }
-
-  toggleKeyGemini.addEventListener('click', () => {
-    keyRowGemini.style.display = keyRowGemini.style.display === 'none' ? 'flex' : 'none';
-  });
-  toggleKeyChatgpt.addEventListener('click', () => {
-    keyRowChatgpt.style.display = keyRowChatgpt.style.display === 'none' ? 'flex' : 'none';
-  });
-
-  /**
-   * Switch active provider via radio selection
-   */
-  radioChatgpt.addEventListener('change', async () => {
-    if (radioChatgpt.checked) {
-      await chrome.storage.local.set({ activeProvider: 'chatgpt' });
-      document.querySelectorAll('.custom-radio-provider').forEach(r => r.checked = false);
-      document.querySelectorAll('.custom-card').forEach(c => c.classList.remove('active-card'));
-      chrome.runtime.sendMessage({ action: 'AUTH_SELECT_PROVIDER', provider: 'chatgpt', backendUrl: effectiveBackendUrl }, () => {
-        refreshAuthStatus(effectiveBackendUrl);
-        refreshServerHealth(effectiveBackendUrl);
-      });
-    }
-  });
-
-  radioGemini.addEventListener('change', async () => {
-    if (radioGemini.checked) {
-      await chrome.storage.local.set({ activeProvider: 'gemini' });
-      document.querySelectorAll('.custom-radio-provider').forEach(r => r.checked = false);
-      document.querySelectorAll('.custom-card').forEach(c => c.classList.remove('active-card'));
-      chrome.runtime.sendMessage({ action: 'AUTH_SELECT_PROVIDER', provider: 'gemini', backendUrl: effectiveBackendUrl }, () => {
-        refreshAuthStatus(effectiveBackendUrl);
-        refreshServerHealth(effectiveBackendUrl);
-      });
-    }
-  });
-
-  /**
-   * Check backend health
+   * Check backend health and latency without overriding user's active provider selection
    */
   async function refreshServerHealth(backendUrl) {
-    chrome.runtime.sendMessage({ action: 'CHECK_BACKEND_STATUS', backendUrl }, (res) => {
-      if (res && res.ok) {
-        serverDot.className = 'status-dot online';
-        serverText.textContent = `Online (${res.provider || 'AI'} • ${res.latencyMs || 10}ms)`;
+    chrome.runtime.sendMessage({ action: 'CHECK_BACKEND_STATUS', backendUrl }, async (res) => {
+      const storageState = await chrome.storage.local.get(['activeProvider']);
+      const currentActive = storageState.activeProvider || 'gemini_1';
 
-        // Automatically ensure the connected backend provider is rendered as connected
-        if (res.provider && (res.connectionStatus === 'connected' || res.status === 'ok')) {
-          renderProviderCard(res.provider, { status: 'connected', accountEmail: res.accountEmail }, { provider: res.provider });
-        }
+      if (res && res.ok) {
+        if (serverDot) serverDot.className = 'status-dot online';
+        updateFooterProviderStatus(currentActive, res.latencyMs || 10);
       } else {
-        serverDot.className = 'status-dot offline';
-        serverText.textContent = 'Backend Offline';
+        if (serverDot) serverDot.className = 'status-dot offline';
+        if (serverText) serverText.textContent = 'Backend Offline';
       }
     });
   }
 
   // Toggle extension enabled state
-  toggleEnabled.addEventListener('change', async () => {
-    const isNowEnabled = toggleEnabled.checked;
-    await chrome.storage.local.set({ enabled: isNowEnabled });
-    broadcastSettings({ enabled: isNowEnabled });
-  });
+  if (toggleEnabled) {
+    toggleEnabled.addEventListener('change', async () => {
+      const isNowEnabled = toggleEnabled.checked;
+      await chrome.storage.local.set({ enabled: isNowEnabled });
+      broadcastSettings({ enabled: isNowEnabled });
+    });
+  }
 
   // Shortcut triggers from popup
   async function sendActionToActiveTab(actionName) {
@@ -673,31 +394,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  btnHeroVision.addEventListener('click', async () => {
-    btnHeroVision.style.opacity = '0.7';
-    await sendActionToActiveTab('TRIGGER_SOLVE_SCREENSHOT');
-    setTimeout(() => window.close(), 250);
-  });
+  if (btnHeroVision) {
+    btnHeroVision.addEventListener('click', async () => {
+      btnHeroVision.style.opacity = '0.7';
+      await sendActionToActiveTab('TRIGGER_SOLVE_SCREENSHOT');
+      setTimeout(() => window.close(), 250);
+    });
+  }
 
-  btnSolve.addEventListener('click', async () => {
-    btnSolve.style.opacity = '0.6';
-    await sendActionToActiveTab('TRIGGER_SOLVE_QUESTION');
-    setTimeout(() => window.close(), 250);
-  });
+  if (btnSolve) {
+    btnSolve.addEventListener('click', async () => {
+      btnSolve.style.opacity = '0.6';
+      await sendActionToActiveTab('TRIGGER_SOLVE_QUESTION');
+      setTimeout(() => window.close(), 250);
+    });
+  }
 
-  btnRepeat.addEventListener('click', async () => {
-    btnRepeat.style.opacity = '0.6';
-    await sendActionToActiveTab('TRIGGER_SHOW_LAST_ANSWER');
-    setTimeout(() => window.close(), 250);
-  });
+  if (btnRepeat) {
+    btnRepeat.addEventListener('click', async () => {
+      btnRepeat.style.opacity = '0.6';
+      await sendActionToActiveTab('TRIGGER_SHOW_LAST_ANSWER');
+      setTimeout(() => window.close(), 250);
+    });
+  }
 
-  linkSettings.addEventListener('click', () => {
-    if (chrome.runtime.openOptionsPage) {
-      chrome.runtime.openOptionsPage();
-    } else {
-      window.open(chrome.runtime.getURL('settings.html'));
-    }
-  });
+  // Settings button: opens settings.html reliably in a new tab
+  if (linkSettings) {
+    linkSettings.addEventListener('click', (e) => {
+      e.preventDefault();
+      chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') });
+    });
+  }
 
   async function broadcastSettings(updated) {
     const tabs = await chrome.tabs.query({});
