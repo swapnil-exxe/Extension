@@ -1,185 +1,264 @@
-# ⚡ Moodle AI Quick Answer
+# ⚡ Ad Blocker San — Intelligent AI Quiz Assistant
 
-A lightweight, zero-interference Chrome Extension (Manifest V3) and Express backend specifically designed for **Moodle** practice quizzes and revision with **account-based AI connection (ChatGPT and Google Gemini)**.
+A high-performance, zero-interference Chrome Extension (Manifest V3) and cloud-ready Node.js Express backend. Designed for seamless practice quiz assistance across **Moodle**, **Canvas**, **Blackboard**, and generic quiz websites with **multi-key Google Gemini rotation** and **OpenAI ChatGPT** integration.
 
-The extension operates with **minimal visual interference**: the Moodle webpage remains completely unchanged with **no permanent answer panel, popup, sidebar, or chat interface**. Interaction occurs exclusively via fast keyboard shortcuts, displaying a tiny, temporary answer notification in the screen corner that automatically disappears after **one second** (with progressive 3-dot expansion for longer answers).
-
----
-
-## 🔐 Account-Based AI Integration vs. API Key Reality
-
-### 1. Official Account Authorization (OAuth with PKCE)
-Users connect their accounts directly through the popup without typing passwords inside the extension:
-1. Click **Connect ChatGPT** or **Connect Gemini** in the popup.
-2. Complete the provider’s official sign-in and authorization process in the browser tab.
-3. Cryptographic state and PKCE verifiers (`S256`) are validated server-side to prevent CSRF attacks.
-4. Tokens are stored securely in backend memory/encrypted server-side sessions.
-5. Choose the connected provider as active, or disconnect at any time.
-
-### 2. What Works Without API Keys vs. What Requires Separate API Access
-
-| Provider | Account Sign-In / OAuth Supported? | Does Account Sign-In Grant Third-Party Inference? | Free Option Available? |
-| :--- | :--- | :--- | :--- |
-| **Google Gemini** | **Yes (Google OAuth 2.0)**<br>`https://accounts.google.com/o/oauth2/v2/auth`<br>Scope: `https://www.googleapis.com/auth/generative-language` | **Requires Google Cloud Project** with Generative Language API enabled. Free tier is supported under standard Google AI limits. | **100% Free** via Google AI Studio (`aistudio.google.com`). Provides 15 RPM with zero cost and no credit card required. |
-| **OpenAI (ChatGPT)** | **Yes ("Sign in with ChatGPT" / SIWC)**<br>`https://auth.openai.com/api/accounts/authorize`<br>Scope: `openid profile email` | **No.** An ordinary ChatGPT consumer login (or ChatGPT Plus subscription) **only provides identity verification**, NOT third-party model inference. OpenAI requires a developer platform account (`platform.openai.com`) with prepaid API credits. | OpenAI has **no free ongoing tier** for API calls (expired trial accounts return `insufficient_quota`). |
-
-> **Important Security Standard:** This project strictly avoids security violations:
-> * Never asks users to type their Google or OpenAI passwords into the extension.
-> * Never extracts browser cookies or reverse-engineers private website session tokens.
-> * Never bypasses authentication or usage limits.
+The extension operates with **zero visual interference**: the webpage remains completely unmodified — there are no permanent sidebars, floating widgets, or chat boxes. Interaction occurs exclusively through fast keyboard shortcuts and a tiny, isolated Shadow DOM notification that automatically disappears in 0.5 seconds.
 
 ---
 
-## ⌨️ Keyboard Shortcuts & Features
+## 🏛️ System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Browser["Google Chrome (Client)"]
+        User(["User on Quiz Page"])
+        ContentScript["Content Script<br>(moodle-content.js)"]
+        Notification["Shadow DOM Popup<br>(notification.js)"]
+        Snipper["Vision Cropper<br>(screenshot-handler.js)"]
+        ServiceWorker["Background Worker<br>(background.js)"]
+        PopupUI["Popup & Settings UI<br>(popup.js / settings.js)"]
+    end
+
+    subgraph Cloud["Render Cloud Backend (Node.js & Express)"]
+        Router["Express Router & Rate Limiter<br>(server.js)"]
+        Cache["SHA-256 Per-Key Cache<br>(answer.js)"]
+        LLMEngine["LLM Engine & Pool Manager<br>(llm-provider.js)"]
+    end
+
+    subgraph AIProviders["AI Provider Networks"]
+        GeminiPool["Google Gemini 3.5 Flash<br>(4-Key Pool • 6,000 req/day)"]
+        OpenAI["OpenAI API<br>(GPT-4o-mini)"]
+    end
+
+    User -->|"Shift + Z (Text)"| ContentScript
+    User -->|"Shift + X (Snip)"| Snipper
+    User -->|"Shift + A (Repeat)"| Notification
+    PopupUI -->|"Switch Key / Provider"| ServiceWorker
+
+    ContentScript -->|"Question Payload"| ServiceWorker
+    Snipper -->|"Base64 Image"| ServiceWorker
+    ServiceWorker -->|"POST /api/answer"| Router
+
+    Router --> Cache
+    Cache -->|"Cache Miss"| LLMEngine
+    LLMEngine -->|"Key 1..4 (Active Key First)"| GeminiPool
+    LLMEngine -->|"ChatGPT Selected"| OpenAI
+    GeminiPool -->|"JSON Answer"| LLMEngine
+    OpenAI -->|"JSON Answer"| LLMEngine
+
+    LLMEngine --> Router
+    Router --> ServiceWorker
+    ServiceWorker --> ContentScript
+    ContentScript -->|"Render 0.5s Glance"| Notification
+```
+
+---
+
+## 🔄 End-to-End Data Flow
+
+### 1. Text Question Solving (<kbd>Shift + Z</kbd>)
+```
+User Cursor / Selection
+   │
+   ▼
+moodle-content.js ──────► Scans DOM for question text & options (A-F, True/False, Math/Code)
+   │
+   ▼
+background.js ──────────► Attaches active provider ('gemini_1'..'gemini_4' or 'chatgpt') & API key
+   │
+   ▼
+Render Cloud Backend ───► Computes SHA-256 cache key (question + options + provider + model + apiKey)
+   │
+   ├─► Cache Hit  ──────► Returns cached JSON in ~10ms
+   │
+   └─► Cache Miss ──────► Calls Google Gemini (thinkingBudget: 0) / OpenAI (gpt-4o-mini)
+                            │
+                            ▼
+notification.js ◄─────── Displays corner notification for 0.5s (e.g. "B — Binary Search")
+```
+
+### 2. Screen Snip & Vision Solving (<kbd>Shift + X</kbd>)
+```
+User presses Shift + X
+   │
+   ▼
+screenshot-handler.js ──► Renders interactive crosshair overlay
+   │
+   ▼
+User drags area ────────► Canvas crops selection in-memory & compresses to JPEG
+   │
+   ▼
+background.js ──────────► Dispatches base64 payload to backend
+   │
+   ▼
+Gemini / OpenAI Vision ─► Evaluates question & diagrams directly from image pixels
+   │
+   ▼
+notification.js ◄─────── Displays corner answer badge
+```
+
+---
+
+## 🔑 Multi-Key Pool & Automatic Failover
+
+The backend features an intelligent **4-key Gemini pool** with round-robin load distribution and automatic 429 quota failover:
+
+```mermaid
+flowchart LR
+    Start([User Request]) --> Primary{"User-Selected Key"}
+    Primary -->|Key 1| K1["Key 1 (EIbw)"]
+    Primary -->|Key 2| K2["Key 2 (zxg)"]
+    Primary -->|Key 3| K3["Key 3 (3vw)"]
+    Primary -->|Key 4| K4["Key 4 (kUg)"]
+    Primary -->|ChatGPT| GPT["OpenAI (gpt-4o-mini)"]
+
+    K1 -->|200 OK| Done([Return Answer])
+    K2 -->|200 OK| Done
+    K3 -->|200 OK| Done
+    K4 -->|200 OK| Done
+    GPT -->|200 OK| Done
+
+    K1 -.->|429 Quota Exhausted| K2
+    K2 -.->|429 Quota Exhausted| K3
+    K3 -.->|429 Quota Exhausted| K4
+    K4 -.->|All Keys Exhausted| GPT
+```
+
+### Free Tier Capacity:
+* **4 Google Gemini Keys**: 1,500 requests/day per key = **6,000 free questions every 24 hours**.
+* **Automatic Daily Reset**: Daily quota automatically recharges every 24 hours at Midnight Pacific Time.
+* **Rate-Limit Reset**: Minute limit (15 RPM) resets automatically every 60 seconds.
+
+---
+
+## ⌨️ Keyboard Shortcuts & Controls
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| <kbd>Shift + Z</kbd> | **Solve Current Question** | Extracts the selected or hovered question and options, queries the AI backend, and shows the concise answer for 1 second. |
-| <kbd>Shift + X</kbd> | **Solve via Screenshot** | Triggers interactive drag-to-snip overlay to crop any region on screen and send directly to Vision AI. |
-| <kbd>Shift + A</kbd> | **Show Last Answer Again** | Re-displays the most recent answer from in-memory storage for 1 second without sending another AI request. |
+| <kbd>Shift + Z</kbd> | **Solve Current Question** | Extracts hovered, focused, or highlighted question + options and displays answer for 0.5s. |
+| <kbd>Shift + X</kbd> | **Snip & Solve Screen** | Opens sniper crosshair to crop any question area on screen for Vision AI solving. |
+| <kbd>Shift + A</kbd> | **Show Last Answer Again** | Re-displays the previous answer from in-memory cache without making any network request. |
+| <kbd>Esc</kbd> | **Cancel Snip** | Exits the screen crop overlay immediately. |
 
-*Global browser shortcuts can also be customized at `chrome://extensions/shortcuts`.*
-
----
-
-## 🔔 Temporary Answer Notification
-
-* **Location**: Top-right corner by default (configurable in Settings to bottom-right, top-left, or bottom-left).
-* **Format**: Displays only the option identifier and concise answer:
-  ```
-  ┌───────────────────┐
-  │ B — Binary Search │
-  └───────────────────┘
-  ```
-* **Auto-Dismissal**: Automatically disappears after **1 second** (measured from when the answer is displayed; configurable in Settings).
-* **Progressive 3-Dot Expansion**: For long multi-sentence answers, the notification reveals a small part first with a clickable `...` toggle that progressively expands more text on click.
-* **Zero Disruption**: High-contrast, dark background (`#09090b`), rounded corners, compact typography, rendered via an isolated Shadow DOM.
+> **Typing Safety**: Shortcuts are automatically disabled while typing in `<input>`, `<textarea>`, or `contenteditable` elements to prevent accidental triggers.
 
 ---
 
-## 📁 Project Architecture
+## 🎨 UI & Design Principles
+
+* **Pure White Theme**: Background `#FFFFFF`, primary text `#000000`, secondary text `#555555`, borders `#E5E5E5`.
+* **Zero Disruption**: No injected sidebars or layout shifts on the quiz page.
+* **Isolated Shadow DOM**: Notifications use encapsulated Shadow DOM styling to avoid collisions with school LMS stylesheets.
+* **Progressive 3-Dot Expansion**: If an answer is lengthy, a compact preview appears with a clickable `...` expansion button.
+
+---
+
+## 📁 Repository Structure
 
 ```
-moodle-ai-quick-answer/
+extention/
 ├── extension/                       # Chrome Extension (Manifest V3)
-│   ├── manifest.json                # MV3 extension configuration & commands
-│   ├── background.js                # Service worker: commands, tab capture, auth proxy
-│   ├── moodle-content.js            # Moodle content script: shortcuts & selection detection
-│   ├── screenshot-handler.js        # Interactive snip selector & cropping
-│   ├── notification.js              # 1-second isolated corner notification with 3-dot expansion
-│   ├── popup.html / popup.js        # Modern account connection interface & active provider switch
-│   ├── settings.html / settings.js  # Position, duration & backend configuration
-│   ├── styles.css                   # Global helper styles
-│   └── icons/                       # Extension icons (16, 32, 48, 128)
+│   ├── manifest.json                # MV3 extension configuration & permissions
+│   ├── background.js                # Service worker: request routing, key mapping & storage
+│   ├── moodle-content.js            # DOM question extractor & shortcut coordinator
+│   ├── screenshot-handler.js        # Interactive screen crop & JPEG compression
+│   ├── notification.js              # Corner notification popup with Shadow DOM isolation
+│   ├── popup.html / popup.js        # 5-key selection interface & active provider switch
+│   ├── settings.html / settings.js  # Position, duration & connection dashboard
+│   ├── styles.css                   # Component styles
+│   └── icons/                       # Extension icon assets (16, 32, 48, 128)
 ├── backend/                         # Node.js & Express Backend Server
 │   ├── server.js                    # Express app with Helmet, CORS, Rate Limiter
 │   ├── routes/
-│   │   ├── answer.js                # POST /api/answer with in-memory caching
-│   │   └── auth.js                  # Official OAuth & PKCE endpoints (/api/auth/*)
+│   │   ├── answer.js                # POST /api/answer with SHA-256 per-key cache
+│   │   └── auth.js                  # Provider selection & auth endpoints
 │   ├── services/
-│   │   └── llm-provider.js          # ChatGPT (SIWC), Gemini (OAuth), and Mock providers
+│   │   └── llm-provider.js          # Multi-key Gemini pool, OpenAI integration & JSON parser
 │   ├── validation/
-│   │   └── answer-schema.js         # Zod schemas for text & image payloads
+│   │   └── answer-schema.js         # Zod schemas for text & vision payloads
 │   ├── tests/
-│   │   ├── auth.test.js             # OAuth PKCE, CSRF state, and token management tests
-│   │   ├── server.test.js           # API route, caching, and schema tests
-│   │   └── fixtures-adapter.test.js # DOM extraction & shortcut tests on all fixtures
+│   │   ├── auth.test.js             # OAuth & provider switching tests
+│   │   ├── server.test.js           # API route & caching tests
+│   │   └── fixtures-adapter.test.js # DOM extraction tests across 9 Moodle layouts
 │   ├── package.json
-│   ├── .env.example
-│   └── .env
+│   └── .env                         # Server environment configuration
 ├── tests/
-│   └── fixtures/                    # Moodle Question Test Fixtures
-│       ├── 1-single-choice.html
-│       ├── 2-multiple-answer.html
-│       ├── 3-true-false.html
-│       ├── 4-numerical.html
-│       ├── 5-formatted-text.html
-│       ├── 6-code-question.html
-│       ├── 7-multi-question-page.html
-│       ├── 8-dynamic-question.html
-│       └── test-harness.html        # Interactive Moodle sandbox
+│   └── fixtures/                    # Test fixtures for single-choice, math, code & dynamic quiz
 ├── package.json
 └── README.md
 ```
 
 ---
 
-## 🚀 Installation & Quick Start (macOS)
+## 🚀 Installation & Quick Start
 
-### 1. Start the Backend Server
+### 1. Load Extension into Chrome
 
-```bash
-cd /Users/swapnil/Documents/extention/backend
-npm install
-npm start
-```
-
-The backend server starts on port `3001`:
-```
-===============================================
-🚀 Moodle AI Assistant Backend running on port 3001
-👉 Health check: http://localhost:3001/health
-👉 Answer API:  http://localhost:3001/api/answer
-👉 LLM Provider: gemini
-===============================================
-```
-
-### 2. Loading the Extension in Google Chrome
-
-1. Open **Google Chrome** and navigate to:
+1. Open Google Chrome and navigate to:
    ```text
    chrome://extensions
    ```
-2. Toggle **Developer mode** to **ON** in the top-right corner.
+2. Turn ON the **Developer mode** toggle in the top-right corner.
 3. Click **Load unpacked** in the top-left corner.
-4. Select the `extension` folder:
-   ```text
-   /Users/swapnil/Documents/extention/extension
-   ```
-5. Click the extension toolbar icon:
-   - Click `[ Connect Gemini ]` or `[ Connect ChatGPT ]`
-   - Select your active connected provider
+4. Select the **`extension`** folder.
+5. The extension is now active and connected to your cloud backend on Render!
 
 ---
 
-## 🔑 Official OAuth Provider Setup
+### 2. Cloning on a New PC (Without Logging into GitHub)
 
-### 1. Google Gemini OAuth Setup
-* **Documentation**: [https://ai.google.dev/gemini-api/docs/oauth](https://ai.google.dev/gemini-api/docs/oauth)
-* **Required Scope**: `https://www.googleapis.com/auth/generative-language`
-* **Redirect URI**: `http://localhost:3001/api/auth/callback`
-* **Configuration** in `backend/.env`:
-  ```env
-  GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-  GOOGLE_CLIENT_SECRET=your-client-secret
-  GOOGLE_REDIRECT_URI=http://localhost:3001/api/auth/callback
-  ```
+Because this repository is private, you can clone and pull on any new PC using a Personal Access Token without logging into GitHub on that machine:
 
-### 2. OpenAI "Sign in with ChatGPT" (SIWC) Setup
-* **Documentation**: [https://developers.openai.com/siwc/quickstart](https://developers.openai.com/siwc/quickstart)
-* **PKCE**: Uses S256 code challenge with state CSRF verification.
-* **Redirect URI**: `http://localhost:3001/api/auth/callback`
-* **Configuration** in `backend/.env`:
-  ```env
-  OPENAI_CLIENT_ID=your-openai-client-id
-  OPENAI_CLIENT_SECRET=your-openai-client-secret
-  OPENAI_REDIRECT_URI=http://localhost:3001/api/auth/callback
-  ```
+#### Clone ONLY the `extension` folder:
+```bash
+git clone --depth 1 --filter=blob:none --sparse https://YOUR_TOKEN@github.com/swapnil-exxe/Extension.git
+cd Extension
+git sparse-checkout set extension
+```
+
+#### Pull future updates:
+```bash
+git pull
+```
 
 ---
 
-## 🧪 Accuracy Benchmark & Test Results
+## ⚙️ Backend Environment Variables (Render)
 
-### 1. Automated Test Suite (31/31 Pass)
+| Variable | Recommended Value | Description |
+| :--- | :--- | :--- |
+| `NODE_ENV` | `production` | Production environment mode |
+| `LLM_PROVIDER` | `gemini` | Default primary provider |
+| `GEMINI_MODEL` | `gemini-3.5-flash` | Sub-500ms Gemini inference model |
+| `GEMINI_API_KEY` | `AQ.Ab8RN6...EIbw` | Primary Gemini key |
+| `GEMINI_API_KEYS` | `Key1,Key2,Key3,Key4` | Comma-separated list of all 4 Gemini keys for rotation |
+| `OPENAI_API_KEY` | `sk-proj-...` | OpenAI API key for ChatGPT |
+| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI target model |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1/chat/completions` | OpenAI API endpoint |
+| `FALLBACK_TO_MOCK` | `false` | Disable mock fallback for 100% real inference |
+
+---
+
+## 🧪 Testing
+
+Run the automated test suite covering all 37 tests:
+
 ```bash
 npm test
 ```
-* **Auth & PKCE Tests**: Verified state CSRF protection, token exchange, and revocation.
-* **Moodle Extraction**: Verified single-choice, multiple-answer, true/false, numerical, formatted code, and dynamic DOM fixtures.
-* **Notification**: Verified 1-second display timer and progressive 3-dot expansion.
 
-### 2. Measured Accuracy on Practice Benchmark
-Tested on real benchmark questions across OS, Biology, and Computer Science:
-* **Accuracy**: **100.0% (3/3)** on standard multiple-choice items.
-* **Average Latency**: **~943ms**.
-* **Model Disclaimer**: AI models do not guarantee 100% correct answers in all circumstances; verify critical exam material.
+```text
+✔ GET /api/auth/status returns initial providers
+✔ Fixtures 1-9: Single-choice, multiple-answer, math & code extraction
+✔ Shortcuts: Shift+Z, Shift+X, Shift+A handlers
+✔ Notification: 500ms glance duration and pure white theme
+✔ Multi-key isolation: Unique cache keys per API key and provider
+
+ℹ tests 37 | ℹ pass 37 | ℹ fail 0 (100% Passing)
+```
+
+---
+
+## 📄 License
+
+Private educational and revision project. Built for zero-interference quiz practice and revision.
