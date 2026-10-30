@@ -47,22 +47,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnSolve = document.getElementById('btn-trigger-solve');
   const btnRepeat = document.getElementById('btn-trigger-repeat');
 
-  // Token / Coins Counter Elements (if present)
-  const usageRemaining = document.getElementById('usage-remaining');
-  const usagePercentLeft = document.getElementById('usage-percent-left');
-  const usageBarFill = document.getElementById('usage-bar-fill');
-  const usageStatusDesc = document.getElementById('usage-status-desc');
-  const btnRefillTokens = document.getElementById('btn-refill-tokens');
-
-  // Individual Model Tokens / Coins Elements
-  const tokensLeftGemini = document.getElementById('tokens-left-gemini');
-  const tokensPctGemini = document.getElementById('tokens-pct-gemini');
-  const quotaBarGemini = document.getElementById('quota-bar-gemini');
-
-  const tokensLeftChatgpt = document.getElementById('tokens-left-chatgpt');
-  const tokensPctChatgpt = document.getElementById('tokens-pct-chatgpt');
-  const quotaBarChatgpt = document.getElementById('quota-bar-chatgpt');
-
   // Add Provider Elements
   const btnShowAddProvider = document.getElementById('btn-show-add-provider');
   const addProviderForm = document.getElementById('add-provider-form');
@@ -197,30 +181,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // Render per-model quota line
-  function renderModelQuotaLine(model, total = 100, used = 0) {
-    const left = Math.max(0, total - used);
-    const leftPct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
-    const isGemini = model === 'gemini';
-
-    const tokensLeftEl = isGemini ? tokensLeftGemini : tokensLeftChatgpt;
-    const tokensPctEl = isGemini ? tokensPctGemini : tokensPctChatgpt;
-    const barEl = isGemini ? quotaBarGemini : quotaBarChatgpt;
-
-    if (tokensLeftEl) tokensLeftEl.textContent = left;
-    if (tokensPctEl) tokensPctEl.textContent = `${leftPct}% remaining`;
-    if (barEl) {
-      barEl.style.width = `${leftPct}%`;
-      if (leftPct <= 0) {
-        barEl.style.background = '#DC2626';
-      } else if (leftPct <= 20) {
-        barEl.style.background = '#D97706';
-      } else {
-        barEl.style.background = isGemini ? '#059669' : '#2563EB';
-      }
-    }
-  }
-
   // Render dynamic custom providers
   async function renderCustomProviders(activeProviderId) {
     if (!customProvidersList) return;
@@ -230,11 +190,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const currentActive = activeProviderId || st.activeProvider;
 
     customProviders.forEach(p => {
-      const total = st[`tokens_${p.id}_total`] || p.totalTokens || 100;
-      const used = st[`tokens_${p.id}_used`] || p.usedTokens || 0;
-      const left = Math.max(0, total - used);
-      const leftPct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
       const isActive = currentActive === p.id;
+      const pStats = (st.realUsageStats?.providers || {})[p.id.toLowerCase()] || {};
+      const solvesToday = pStats.solvesToday || 0;
+      const tokensToday = pStats.tokensToday || 0;
 
       const card = document.createElement('div');
       card.className = `provider-card custom-card ${isActive ? 'active-card' : ''}`;
@@ -267,17 +226,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           <input type="password" class="key-input" id="key-input-${p.id}" placeholder="Enter new API key...">
           <button class="btn-save-key btn-save-key-custom" data-id="${p.id}">Save</button>
         </div>
-
-        <!-- Dedicated stock / quota line for this custom provider -->
-        <div class="provider-quota-row">
-          <div class="provider-quota-meta">
-            <span>${p.name} Stock: <strong class="provider-quota-tokens">${left}</strong> left</span>
-            <span>${leftPct}% remaining</span>
-          </div>
-          <div class="provider-quota-bar">
-            <div class="provider-quota-fill custom" style="width: ${leftPct}%; ${leftPct <= 0 ? 'background: #ef4444;' : leftPct <= 20 ? 'background: #f59e0b;' : ''}"></div>
-          </div>
-        </div>
       `;
 
       // Event handlers for this custom card
@@ -286,7 +234,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (radio.checked) {
           await chrome.storage.local.set({ activeProvider: p.id });
           currentActiveModelName = p.name;
-          renderTokenQuota(total, used, p.name);
           renderCustomProviders(p.id);
           // uncheck native radios
           radioGemini.checked = false;
@@ -339,81 +286,47 @@ document.addEventListener('DOMContentLoaded', async () => {
         const total = st[`tokens_${activeObj.id}_total`] || activeObj.totalTokens || 100;
         const used = st[`tokens_${activeObj.id}_used`] || activeObj.usedTokens || 0;
         currentActiveModelName = activeObj.name;
-        renderTokenQuota(total, used, activeObj.name);
       }
     }
   }
 
-  // Render tokens / credit stock with percentage used and remaining
-  function renderTokenQuota(total = 100, used = 0, modelName = currentActiveModelName) {
-    if (!usageRemaining || !usageBarFill) return;
-
-    const left = Math.max(0, total - used);
-    const leftPct = Math.min(100, Math.max(0, Math.round((left / total) * 100)));
-    const usedPct = 100 - leftPct;
-
-    usageRemaining.textContent = left;
-    if (usagePercentLeft) {
-      usagePercentLeft.textContent = `(${leftPct}% left)`;
-    }
-    usageBarFill.style.width = `${leftPct}%`;
-
-    if (usageStatusDesc) {
-      if (leftPct <= 0) {
-        usageBarFill.style.background = '#ef4444';
-        usageStatusDesc.textContent = `❌ Out of tokens (100% used) • Refill required for ${modelName}`;
-        usageStatusDesc.style.color = '#f87171';
-      } else if (leftPct <= 20) {
-        usageBarFill.style.background = '#f59e0b';
-        usageStatusDesc.textContent = `⚠️ Low: ${usedPct}% used (${leftPct}% left) • Model: ${modelName}`;
-        usageStatusDesc.style.color = '#fbbf24';
-      } else {
-        usageBarFill.style.background = 'linear-gradient(90deg, #10b981, #3b82f6)';
-        usageStatusDesc.textContent = `⚡ ${usedPct}% used • ${leftPct}% left • Active Model: ${modelName}`;
-        usageStatusDesc.style.color = '#94a3b8';
-      }
-    }
+  function highlightActiveProvider(val) {
+    const allCards = document.querySelectorAll('.provider-card');
+    allCards.forEach(c => c.classList.remove('active-card'));
+    const targetCard = document.getElementById(`card-${val}`);
+    if (targetCard) targetCard.classList.add('active-card');
+    const targetRadio = document.querySelector(`input[name="active-provider"][value="${val}"]`);
+    if (targetRadio) targetRadio.checked = true;
   }
 
-  const initialTotal = settings.totalTokens || 100;
-  const initialUsed = settings.usedTokens || 0;
-  renderTokenQuota(initialTotal, initialUsed);
+  // Handle all provider radio selections (all 4 Gemini keys, ChatGPT, and custom providers)
+  document.addEventListener('change', async (e) => {
+    if (e.target && e.target.name === 'active-provider' && e.target.checked) {
+      const selected = e.target.value;
+      await chrome.storage.local.set({ activeProvider: selected });
+      highlightActiveProvider(selected);
+    }
+  });
 
-  // Render per-model lines initially
-  renderModelQuotaLine('gemini', settings.tokensGeminiTotal || 100, settings.tokensGeminiUsed || 0);
-  renderModelQuotaLine('chatgpt', settings.tokensChatgptTotal || 100, settings.tokensChatgptUsed || 0);
+  // Highlight saved active provider initially
+  const initialActive = settings.activeProvider || 'gemini_1';
+  highlightActiveProvider(initialActive);
+
+  // Render dynamic custom providers initially
   renderCustomProviders(settings.activeProvider);
 
-  // Refill tokens button (refills all model stocks to 100)
-  if (btnRefillTokens) {
-    btnRefillTokens.addEventListener('click', async () => {
-      const refillData = {
-        totalTokens: 100,
-        usedTokens: 0,
-        tokensGeminiTotal: 100,
-        tokensGeminiUsed: 0,
-        tokensChatgptTotal: 100,
-        tokensChatgptUsed: 0
-      };
-      customProviders.forEach(p => {
-        refillData[`tokens_${p.id}_total`] = 100;
-        refillData[`tokens_${p.id}_used`] = 0;
-      });
-
-      await chrome.storage.local.set(refillData);
-      renderTokenQuota(100, 0);
-      renderModelQuotaLine('gemini', 100, 0);
-      renderModelQuotaLine('chatgpt', 100, 0);
+  // Listen for provider changes
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.customProviders || changes.activeProvider) {
       renderCustomProviders();
-      if (usageStatusDesc) {
-        usageStatusDesc.textContent = '🎉 All AI model packs refilled to 100 tokens (100% full)!';
+      if (changes.activeProvider) {
+        highlightActiveProvider(changes.activeProvider.newValue);
       }
-    });
-  }
+    }
+  });
 
   // Initial loads
   await refreshServerHealth(effectiveBackendUrl);
-  await refreshAuthStatus(effectiveBackendUrl);
 
   // Poll status periodically while popup is open (to update when user completes OAuth in tab)
   const pollInterval = setInterval(() => {
@@ -468,9 +381,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       card.classList.add('active-card');
       radio.checked = true;
       currentActiveModelName = isGpt ? 'ChatGPT (GPT-4o-mini)' : 'Gemini (Flash-Lite)';
-      chrome.storage.local.get(['totalTokens', 'usedTokens'], (st) => {
-        renderTokenQuota(st.totalTokens || 100, st.usedTokens || 0, currentActiveModelName);
-      });
     } else {
       card.classList.remove('active-card');
       radio.checked = false;
@@ -723,6 +633,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (res && res.ok) {
         serverDot.className = 'status-dot online';
         serverText.textContent = `Online (${res.provider || 'AI'} • ${res.latencyMs || 10}ms)`;
+
+        // Automatically ensure the connected backend provider is rendered as connected
+        if (res.provider && (res.connectionStatus === 'connected' || res.status === 'ok')) {
+          renderProviderCard(res.provider, { status: 'connected', accountEmail: res.accountEmail }, { provider: res.provider });
+        }
       } else {
         serverDot.className = 'status-dot offline';
         serverText.textContent = 'Backend Offline';

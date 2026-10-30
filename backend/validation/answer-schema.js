@@ -32,6 +32,7 @@ export const AnswerRequestSchema = z.object({
   image: z.string().optional(), // base64 image data URL or raw base64 string
   provider: z.string().optional(),
   model: z.string().optional(),
+  apiKey: z.string().optional(),
   extractionDurationMs: z.number().optional()
 }).refine(data => (data.question && data.question.trim().length > 0) || (data.image && data.image.length > 0), {
   message: 'Either question text or image screenshot must be provided'
@@ -50,7 +51,16 @@ export const AnswerResponseSchema = z.object({
   explanation: z.string().default(''),
   reason: z.string().optional(),
   confidence: z.number().min(0).max(1).default(0.90),
-  needsMoreContext: z.boolean().default(false)
+  needsMoreContext: z.boolean().default(false),
+  realUsage: z.object({
+    promptTokens: z.number().default(0),
+    completionTokens: z.number().default(0),
+    totalTokens: z.number().default(0),
+    remainingRequests: z.number().nullable().optional(),
+    limitRequests: z.number().nullable().optional(),
+    modelUsed: z.string().optional(),
+    provider: z.string().optional()
+  }).optional()
 }).transform(val => ({
   ...val,
   answerText: val.answerText || val.answer,

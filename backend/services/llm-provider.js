@@ -182,22 +182,39 @@ function buildUserPrompt({ questionType, question, options, hasImage }) {
   return prompt;
 }
 
+let geminiKeyIndex = 0;
+const exhaustedGeminiKeys = new Set();
+
+/**
+ * Returns the pool of configured Gemini API keys (supports multiple keys for rotation & failover)
+ */
+export function getGeminiKeyPool(overrideKey) {
+  const raw = [
+    overrideKey,
+    process.env.GEMINI_API_KEYS,
+    process.env.GEMINI_API_KEY
+  ].filter(Boolean).join(',');
+
+  const keys = Array.from(new Set(raw.split(',').map(k => k.trim()).filter(k => k.length > 5)));
+  return keys;
+}
+
 /**
  * Gemini Provider implementation (Text + Multimodal Vision)
+ * Features automatic key rotation and failover across multiple configured Gemini API keys.
  */
 async function callGemini(payload, config = {}) {
   const acc = connectedAccounts.gemini;
   const isRealOAuthToken = Boolean(acc.status === 'connected' && acc.accessToken && acc.accessToken.startsWith('ya29.'));
   const accessToken = isRealOAuthToken ? acc.accessToken : null;
-  const apiKey = config.apiKey || process.env.GEMINI_API_KEY;
+  const keyPool = getGeminiKeyPool(config.apiKey);
 
-  if (!accessToken && !apiKey) {
+  if (!accessToken && keyPool.length === 0) {
     if (acc.status === 'connected' && acc.accessToken?.startsWith('mock_')) {
       return callMock(payload);
     }
     throw new Error('Gemini is not connected. Please connect your Gemini account.');
   }
-
 
   const initialModel = config.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash';
   const candidateModels = Array.from(new Set([
@@ -242,66 +259,97 @@ async function callGemini(payload, config = {}) {
     ],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 250,
-      responseMimeType: 'application/json'
+      maxOutputTokens: 1024,
+      responseMimeType: 'application/json',
+      thinkingConfig: { thinkingBudget: 0 }
     }
   };
 
+  // Prioritize non-exhausted keys in the pool
+  const availableKeys = keyPool.filter(k => !exhaustedGeminiKeys.has(k));
+  const candidateKeys = availableKeys.length > 0 ? availableKeys : keyPool;
+
+  // Reorder keys round-robin style so traffic is distributed evenly across all keys
+  const startIndex = geminiKeyIndex++;
+  const orderedKeys = candidateKeys.length > 0 
+    ? [...candidateKeys.slice(startIndex % candidateKeys.length), ...candidateKeys.slice(0, startIndex % candidateKeys.length)]
+    : [null];
+
   let lastError = null;
-  for (const model of candidateModels) {
-    try {
-      const url = accessToken
-        ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
-        : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  for (const currentKey of (accessToken ? [null] : orderedKeys)) {
+    for (const model of candidateModels) {
+      try {
+        const url = accessToken
+          ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
+          : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
 
-      const headers = {
-        'Content-Type': 'application/json'
-      };
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      } else {
-        headers['x-goog-api-key'] = apiKey;
+        const headers = {
+          'Content-Type': 'application/json'
+        };
+        if (accessToken) {
+          headers['Authorization'] = `Bearer ${accessToken}`;
+        } else {
+          headers['x-goog-api-key'] = currentKey;
+        }
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(config.timeoutMs || 25000)
+        });
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          // If this key hit 429 quota/rate limit, remember it and switch to next key in pool
+          if (response.status === 429) {
+            if (currentKey) exhaustedGeminiKeys.add(currentKey);
+            if (orderedKeys.length > 1) {
+              console.warn(`[Gemini Pool] Key hit 429 rate limit/quota, switching to next key in pool...`);
+              break;
+            }
+          }
+          throw new Error(`Gemini API error (${response.status}): ${errorBody}`);
+        }
+
+        const data = await response.json();
+        const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) {
+          throw new Error('Gemini returned no text content');
+        }
+
+        const parsed = extractAndParseJSON(rawText);
+        parsed.realUsage = {
+          promptTokens: data.usageMetadata?.promptTokenCount || 0,
+          completionTokens: data.usageMetadata?.candidatesTokenCount || 0,
+          totalTokens: data.usageMetadata?.totalTokenCount || 0,
+          remainingRequests: null,
+          limitRequests: 1500 * orderedKeys.length,
+          modelUsed: model,
+          provider: 'gemini'
+        };
+        return parsed;
+      } catch (err) {
+        lastError = err;
+        if (
+          err.message.includes('404') ||
+          err.message.includes('NOT_FOUND') ||
+          err.message.includes('503') ||
+          err.message.includes('UNAVAILABLE') ||
+          err.message.includes('high demand')
+        ) {
+          console.warn(`[LLM Provider] Gemini model ${model} unavailable (${err.message.slice(0, 80)}...). Trying next model...`);
+          continue;
+        }
+        if (err.message.includes('429') && orderedKeys.length > 1) {
+          break; // Switch to next key in pool
+        }
+        throw err;
       }
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(config.timeoutMs || 25000)
-      });
-
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(`Gemini API error (${response.status}): ${errorBody}`);
-      }
-
-      const data = await response.json();
-      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) {
-        throw new Error('Gemini returned no text content');
-      }
-
-      return extractAndParseJSON(rawText);
-    } catch (err) {
-      lastError = err;
-      if (
-        err.message.includes('404') ||
-        err.message.includes('NOT_FOUND') ||
-        err.message.includes('429') ||
-        err.message.includes('RESOURCE_EXHAUSTED') ||
-        err.message.includes('503') ||
-        err.message.includes('UNAVAILABLE') ||
-        err.message.includes('high demand')
-      ) {
-        console.warn(`[LLM Provider] Gemini model ${model} unavailable (${err.message.slice(0, 80)}...). Trying next model...`);
-        continue;
-      }
-      throw err;
     }
   }
 
-  throw lastError || new Error('All Gemini candidate models failed');
+  throw lastError || new Error('All Gemini candidate models and keys failed');
 }
 
 /**
@@ -375,7 +423,19 @@ async function callOpenAI(payload, config = {}) {
     throw new Error('OpenAI returned no text content');
   }
 
-  return extractAndParseJSON(rawText);
+  const parsed = extractAndParseJSON(rawText);
+  const remainingReq = response.headers.get('x-ratelimit-remaining-requests');
+  const limitReq = response.headers.get('x-ratelimit-limit-requests');
+  parsed.realUsage = {
+    promptTokens: data.usage?.prompt_tokens || 0,
+    completionTokens: data.usage?.completion_tokens || 0,
+    totalTokens: data.usage?.total_tokens || 0,
+    remainingRequests: remainingReq ? parseInt(remainingReq, 10) : null,
+    limitRequests: limitReq ? parseInt(limitReq, 10) : 500,
+    modelUsed: model,
+    provider: 'chatgpt'
+  };
+  return parsed;
 }
 
 
@@ -566,7 +626,16 @@ export async function getLLMAnswer(payload, options = {}) {
 
   try {
     if (provider === 'gemini') {
-      rawResult = await callGemini(payload, options);
+      try {
+        rawResult = await callGemini(payload, options);
+      } catch (geminiErr) {
+        if (connectedAccounts.chatgpt.status === 'connected' || process.env.OPENAI_API_KEY) {
+          console.warn(`[LLM Provider] All Gemini keys exhausted (${geminiErr.message}). Automatically routing to ChatGPT...`);
+          rawResult = await callOpenAI(payload, options);
+        } else {
+          throw geminiErr;
+        }
+      }
     } else if (provider === 'chatgpt') {
       try {
         rawResult = await callOpenAI(payload, options);
@@ -1068,8 +1137,11 @@ export async function saveProviderApiKey(provider, apiKey) {
       message: 'ChatGPT connected successfully with API key'
     };
   } else if (norm === 'gemini') {
+    const rawKeys = cleanKey.split(',').map(k => k.trim()).filter(k => k.length > 5);
+    const primaryKey = rawKeys[0];
+
     try {
-      const testRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${cleanKey}`, {
+      const testRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${primaryKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1090,13 +1162,17 @@ export async function saveProviderApiKey(provider, apiKey) {
       throw testErr;
     }
 
-    process.env.GEMINI_API_KEY = cleanKey;
+    process.env.GEMINI_API_KEY = primaryKey;
+    const existingPool = getGeminiKeyPool();
+    const updatedPool = Array.from(new Set([...rawKeys, ...existingPool]));
+    process.env.GEMINI_API_KEYS = updatedPool.join(',');
+
     connectedAccounts.gemini = {
       status: 'connected',
-      accessToken: cleanKey,
+      accessToken: primaryKey,
       refreshToken: null,
       expiresAt: null,
-      accountEmail: 'google-user@api-key',
+      accountEmail: updatedPool.length > 1 ? `gemini-${updatedPool.length}-keys@pool` : 'google-user@api-key',
       error: null,
       connectedAt: Date.now()
     };
@@ -1106,7 +1182,7 @@ export async function saveProviderApiKey(provider, apiKey) {
       success: true,
       provider: 'gemini',
       status: 'connected',
-      message: 'Google Gemini connected successfully with API key'
+      message: `Google Gemini connected successfully (${updatedPool.length} keys active in pool)`
     };
   }
 

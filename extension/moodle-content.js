@@ -639,6 +639,13 @@
 
     // 3. If no active question could be confidently detected, report error instead of guessing
     if (!data || (!data.question && (!data.options || data.options.length === 0))) {
+      // If the page is an image URL (e.g. .png / .jpg) or contains an image, automatically fallback to Vision solve
+      const isImageDoc = /\.(png|jpe?g|webp|gif)($|\?)/i.test(window.location.pathname) || document.querySelector('img');
+      if (isImageDoc) {
+        console.log('[Moodle AI] Image-based question detected on page, falling back to Vision Screenshot...');
+        return solveQuestionScreenshot();
+      }
+
       console.warn('[Moodle AI] Could not confidently identify active question.');
       if (notification) {
         notification.showError('UNCERTAIN — Question needs verification');

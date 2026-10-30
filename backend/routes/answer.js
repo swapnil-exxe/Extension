@@ -78,7 +78,11 @@ router.post('/answer', async (req, res) => {
     }
 
     // 3. Request LLM answer
-    const llmResult = await getLLMAnswer(payload);
+    const llmResult = await getLLMAnswer(payload, {
+      apiKey: payload.apiKey,
+      provider: providerName,
+      model: modelName
+    });
     const latencyMs = Date.now() - startTime;
 
     // 4. Save to cache

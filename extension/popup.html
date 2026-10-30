@@ -13,11 +13,11 @@
     }
 
     body {
-      width: 335px;
-      padding: 14px;
+      width: 360px;
+      padding: 10px 12px;
       background: #FFFFFF;
       color: #000000;
-      font-size: 13px;
+      font-size: 12px;
     }
 
     /* Header */
@@ -25,9 +25,9 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding-bottom: 10px;
+      padding-bottom: 8px;
       border-bottom: 1px solid #E5E5E5;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
 
     .brand {
@@ -85,7 +85,7 @@
 
     /* Primary Quick Action Button (Snip & Solve) */
     .hero-action {
-      margin-bottom: 14px;
+      margin-bottom: 10px;
     }
 
     .btn-hero {
@@ -93,9 +93,9 @@
       background: #FFFFFF;
       color: #000000;
       border: 1px solid #E5E5E5;
-      border-radius: 8px;
-      padding: 10px 12px;
-      font-size: 13px;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 12px;
       font-weight: 700;
       cursor: pointer;
       display: flex;
@@ -226,15 +226,15 @@
     .providers-container {
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      margin-bottom: 14px;
+      gap: 5px;
+      margin-bottom: 10px;
     }
 
     .provider-card {
       background: #FFFFFF;
       border: 1px solid #E5E5E5;
-      border-radius: 8px;
-      padding: 10px 12px;
+      border-radius: 6px;
+      padding: 6px 9px;
       transition: border-color 0.15s, background-color 0.15s;
     }
 
@@ -247,65 +247,28 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 8px;
+      margin-bottom: 3px;
     }
 
     .provider-identity {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
+      white-space: nowrap;
     }
 
-    .provider-quota-row {
-      margin-top: 8px;
-      padding-top: 7px;
-      border-top: 1px solid #E5E5E5;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .provider-quota-meta {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .key-tag {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 10px;
       color: #555555;
-    }
-
-    .provider-quota-tokens {
-      font-weight: 700;
-      color: #000000;
-    }
-
-    .provider-quota-bar {
-      width: 100%;
-      height: 4px;
       background: #F5F5F5;
-      border-radius: 3px;
-      overflow: hidden;
+      padding: 1px 5px;
+      border-radius: 4px;
       border: 1px solid #E5E5E5;
+      white-space: nowrap;
     }
 
-    .provider-quota-fill {
-      height: 100%;
-      width: 100%;
-      border-radius: 2px;
-      transition: width 0.3s ease, background 0.3s ease;
-      background: #000000;
-    }
 
-    .provider-quota-fill.gemini {
-      background: #059669;
-    }
-
-    .provider-quota-fill.chatgpt {
-      background: #2563EB;
-    }
-
-    .provider-quota-fill.custom {
-      background: #4B5563;
-    }
 
     .btn-remove-custom {
       background: #FFFFFF;
@@ -694,57 +657,87 @@
     <!-- Container for dynamic custom providers -->
     <div id="custom-providers-list"></div>
 
-    <!-- Gemini Provider Card -->
-    <div class="provider-card" id="card-gemini">
+    <!-- Gemini Key 1 -->
+    <div class="provider-card" id="card-gemini_1">
       <div class="provider-top">
         <div class="provider-identity">
           <span class="provider-logo">✦</span>
-          <span class="provider-name">Gemini</span>
+          <span class="provider-name">Gemini (Key 1)</span>
+          <span class="key-tag">AQ.Ab8...EIbw</span>
         </div>
-        <div class="status-badge" id="badge-gemini">
+        <div class="status-badge connected">
           <span class="dot"></span>
-          <span class="badge-text" id="status-gemini">Not connected</span>
+          <span class="badge-text">Connected</span>
         </div>
       </div>
-
-      <!-- Connected View -->
-      <div class="provider-actions" id="actions-gemini" style="display: none;">
+      <div class="provider-actions">
         <label class="provider-selection">
-          <input type="radio" name="active-provider" id="radio-gemini" value="gemini">
+          <input type="radio" name="active-provider" class="radio-ai-provider" id="radio-gemini_1" value="gemini_1">
           <span>Active Provider</span>
         </label>
-        <div class="provider-btn-group">
-          <button class="btn-change-key" id="btn-toggle-key-connected-gemini" title="Add or change API key">+ Key</button>
-          <button class="btn-disconnect" id="btn-disconnect-gemini">Disconnect</button>
-        </div>
       </div>
-      <div class="key-input-row" id="key-row-connected-gemini" style="display: none; margin-top: 8px;">
-        <input type="password" class="key-input" id="key-input-connected-gemini" placeholder="AIzaSy... (new Gemini key)">
-        <button class="btn-save-key" id="btn-save-connected-gemini">Save</button>
-      </div>
+    </div>
 
-      <!-- Gemini Individual Token Limit & Stock Line -->
-      <div class="provider-quota-row" id="quota-row-gemini">
-        <div class="provider-quota-meta">
-          <span>Gemini Stock: <strong class="provider-quota-tokens" id="tokens-left-gemini">100</strong> left</span>
-          <span id="tokens-pct-gemini">100% remaining</span>
+    <!-- Gemini Key 2 -->
+    <div class="provider-card" id="card-gemini_2">
+      <div class="provider-top">
+        <div class="provider-identity">
+          <span class="provider-logo">✦</span>
+          <span class="provider-name">Gemini (Key 2)</span>
+          <span class="key-tag">AQ.Ab8...zxg</span>
         </div>
-        <div class="provider-quota-bar">
-          <div class="provider-quota-fill gemini" id="quota-bar-gemini" style="width: 100%;"></div>
+        <div class="status-badge connected">
+          <span class="dot"></span>
+          <span class="badge-text">Connected</span>
         </div>
       </div>
+      <div class="provider-actions">
+        <label class="provider-selection">
+          <input type="radio" name="active-provider" class="radio-ai-provider" id="radio-gemini_2" value="gemini_2">
+          <span>Active Provider</span>
+        </label>
+      </div>
+    </div>
 
-      <!-- Not Connected View -->
-      <div class="provider-connect-block" id="connect-block-gemini">
-        <button class="btn-connect-oauth" id="btn-connect-gemini">
-          <span>Connect Gemini</span>
-        </button>
-        <div class="key-feedback" id="feedback-gemini"></div>
-        <span class="key-toggle-link" id="toggle-key-gemini">Or enter API key manually</span>
-        <div class="key-input-row" id="key-row-gemini" style="display: none;">
-          <input type="password" class="key-input" id="key-input-gemini" placeholder="AIzaSy... (free key)">
-          <button class="btn-save-key" id="btn-save-gemini">Save</button>
+    <!-- Gemini Key 3 -->
+    <div class="provider-card" id="card-gemini_3">
+      <div class="provider-top">
+        <div class="provider-identity">
+          <span class="provider-logo">✦</span>
+          <span class="provider-name">Gemini (Key 3)</span>
+          <span class="key-tag">AQ.Ab8...3vw</span>
         </div>
+        <div class="status-badge connected">
+          <span class="dot"></span>
+          <span class="badge-text">Connected</span>
+        </div>
+      </div>
+      <div class="provider-actions">
+        <label class="provider-selection">
+          <input type="radio" name="active-provider" class="radio-ai-provider" id="radio-gemini_3" value="gemini_3">
+          <span>Active Provider</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Gemini Key 4 -->
+    <div class="provider-card" id="card-gemini_4">
+      <div class="provider-top">
+        <div class="provider-identity">
+          <span class="provider-logo">✦</span>
+          <span class="provider-name">Gemini (Key 4)</span>
+          <span class="key-tag">AQ.Ab8...kUg</span>
+        </div>
+        <div class="status-badge connected">
+          <span class="dot"></span>
+          <span class="badge-text">Connected</span>
+        </div>
+      </div>
+      <div class="provider-actions">
+        <label class="provider-selection">
+          <input type="radio" name="active-provider" class="radio-ai-provider" id="radio-gemini_4" value="gemini_4">
+          <span>Active Provider</span>
+        </label>
       </div>
     </div>
 
@@ -754,51 +747,18 @@
         <div class="provider-identity">
           <span class="provider-logo">🤖</span>
           <span class="provider-name">ChatGPT</span>
+          <span class="key-tag">sk-proj-...acJYA</span>
         </div>
-        <div class="status-badge" id="badge-chatgpt">
+        <div class="status-badge connected" id="badge-chatgpt">
           <span class="dot"></span>
-          <span class="badge-text" id="status-chatgpt">Not connected</span>
+          <span class="badge-text" id="status-chatgpt">Connected</span>
         </div>
       </div>
-
-      <!-- Connected View -->
-      <div class="provider-actions" id="actions-chatgpt" style="display: none;">
+      <div class="provider-actions">
         <label class="provider-selection">
-          <input type="radio" name="active-provider" id="radio-chatgpt" value="chatgpt">
+          <input type="radio" name="active-provider" class="radio-ai-provider" id="radio-chatgpt" value="chatgpt">
           <span>Active Provider</span>
         </label>
-        <div class="provider-btn-group">
-          <button class="btn-change-key" id="btn-toggle-key-connected-chatgpt" title="Add or change API key">+ Key</button>
-          <button class="btn-disconnect" id="btn-disconnect-chatgpt">Disconnect</button>
-        </div>
-      </div>
-      <div class="key-input-row" id="key-row-connected-chatgpt" style="display: none; margin-top: 8px;">
-        <input type="password" class="key-input" id="key-input-connected-chatgpt" placeholder="sk-... (new OpenAI key)">
-        <button class="btn-save-key" id="btn-save-connected-chatgpt">Save</button>
-      </div>
-
-      <!-- ChatGPT Individual Token Limit & Stock Line -->
-      <div class="provider-quota-row" id="quota-row-chatgpt">
-        <div class="provider-quota-meta">
-          <span>ChatGPT Stock: <strong class="provider-quota-tokens" id="tokens-left-chatgpt">100</strong> left</span>
-          <span id="tokens-pct-chatgpt">100% remaining</span>
-        </div>
-        <div class="provider-quota-bar">
-          <div class="provider-quota-fill chatgpt" id="quota-bar-chatgpt" style="width: 100%;"></div>
-        </div>
-      </div>
-
-      <!-- Not Connected View -->
-      <div class="provider-connect-block" id="connect-block-chatgpt">
-        <button class="btn-connect-oauth" id="btn-connect-chatgpt">
-          <span>Connect ChatGPT</span>
-        </button>
-        <div class="key-feedback" id="feedback-chatgpt"></div>
-        <span class="key-toggle-link" id="toggle-key-chatgpt">Or enter API key manually</span>
-        <div class="key-input-row" id="key-row-chatgpt" style="display: none;">
-          <input type="password" class="key-input" id="key-input-chatgpt" placeholder="sk-... (OpenAI key)">
-          <button class="btn-save-key" id="btn-save-chatgpt">Save</button>
-        </div>
       </div>
     </div>
   </div>

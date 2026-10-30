@@ -37,12 +37,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Test connection button
   btnTestConnection.addEventListener('click', () => {
-    const testUrl = inputBackendUrl.value.trim() || 'http://localhost:3001';
+    const testUrl = inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com';
     statusBox.className = 'status-box';
     statusBox.style.display = 'block';
     statusBox.textContent = 'Testing connection...';
 
+    const wakeNoticeTimer = setTimeout(() => {
+      if (statusBox.textContent === 'Testing connection...') {
+        statusBox.textContent = 'Connecting... (If using free cloud like Render, instance may be waking up from sleep)';
+      }
+    }, 2500);
+
     chrome.runtime.sendMessage({ action: 'CHECK_BACKEND_STATUS', backendUrl: testUrl }, (res) => {
+      clearTimeout(wakeNoticeTimer);
       if (res && res.ok) {
         statusBox.className = 'status-box success';
         statusBox.innerHTML = `
@@ -54,7 +61,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         statusBox.innerHTML = `
           <strong>❌ Connection Failed:</strong><br>
           ${res ? res.error : 'Backend unreachable'}.<br>
-          Make sure your backend is running with <code>npm start</code> at ${testUrl}.
+          Make sure your backend server is online at <code>${testUrl}</code>.
         `;
       }
     });
@@ -62,7 +69,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Clear cache button
   btnClearCache.addEventListener('click', () => {
-    const testUrl = inputBackendUrl.value.trim() || 'http://localhost:3001';
+    const testUrl = inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com';
     chrome.runtime.sendMessage({ action: 'CLEAR_CACHE', backendUrl: testUrl }, (res) => {
       if (res && res.success) {
         showToast('AI response cache cleared successfully!');
@@ -77,7 +84,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const updated = {
       notificationPosition: selectPosition.value,
       notificationDuration: parseInt(selectDuration.value, 10),
-      backendUrl: inputBackendUrl.value.trim() || 'http://localhost:3001'
+      backendUrl: inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com'
     };
 
     await chrome.storage.local.set(updated);

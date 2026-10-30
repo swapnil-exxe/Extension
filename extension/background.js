@@ -182,13 +182,26 @@ async function handleAnalyzeQuestion(payload) {
   const cleanUrl = backendUrl.replace(/\/+$/, '');
   const targetEndpoint = `${cleanUrl}/api/answer`;
 
-  // Attach active provider if not already set in payload
-  if (!payload.provider && storage.activeProvider) {
-    payload.provider = storage.activeProvider;
+  const GEMINI_KEYS = {
+    gemini_1: 'AQ.Ab8RN6KFANrgYQ9jNdxrKrvFgSTK29zX5LlklGYKiJ_NMQEIbw',
+    gemini_2: 'AQ.Ab8RN6L5SzwMkdACJLrfDhTITMLagzjNqIN4DLR_-lN-fBjzxg',
+    gemini_3: 'AQ.Ab8RN6JLyJ-DRRQkkQ8hsYe_X5NRUdNsT_sQtv7XjAoI2Qn3vw',
+    gemini_4: 'AQ.Ab8RN6Kr25hFpdJ7q7Q4PDOZV_cERl0ARAJdr0v7KMMED3fkUg'
+  };
+
+  // Attach active provider and specific key if selected
+  const selectedProvider = payload.provider || storage.activeProvider || 'gemini_1';
+  if (selectedProvider.startsWith('gemini')) {
+    payload.provider = 'gemini';
+    if (GEMINI_KEYS[selectedProvider]) {
+      payload.apiKey = GEMINI_KEYS[selectedProvider];
+    }
+  } else {
+    payload.provider = selectedProvider;
   }
 
-  // 12s timeout for fast response & timely fallback
-  const timeoutId = setTimeout(() => currentController.abort(), 12000);
+  // 25s timeout to allow cloud instances (Render cold start) & provider inference to complete
+  const timeoutId = setTimeout(() => currentController.abort(), 25000);
 
   try {
     const response = await fetch(targetEndpoint, {
@@ -211,46 +224,83 @@ async function handleAnalyzeQuestion(payload) {
     }
 
     const data = await response.json();
-
-    // Deduct 1 credit/token upon successful solve
-    const allStore = await chrome.storage.local.get(null);
-    const currentUsed = allStore.usedTokens || 0;
-    const activeProvider = allStore.activeProvider || (data.provider || '').toLowerCase();
-
-    if (activeProvider && activeProvider.startsWith('custom_')) {
-      const customUsedKey = `tokens_${activeProvider}_used`;
-      const prevCustomUsed = allStore[customUsedKey] || 0;
-      await chrome.storage.local.set({
-        usedTokens: currentUsed + 1,
-        [customUsedKey]: prevCustomUsed + 1
-      });
+    if (data && data.realUsage) {
+      await updateRealUsageStats(data.realUsage);
     } else {
-      const isGpt = (data.provider || '').toLowerCase().includes('chatgpt') || (data.provider || '').toLowerCase().includes('openai') || activeProvider === 'chatgpt';
-      if (isGpt) {
-        const gptUsed = allStore.tokensChatgptUsed || 0;
-        await chrome.storage.local.set({
-          usedTokens: currentUsed + 1,
-          tokensChatgptUsed: gptUsed + 1
-        });
-      } else {
-        const geminiUsed = allStore.tokensGeminiUsed || 0;
-        await chrome.storage.local.set({
-          usedTokens: currentUsed + 1,
-          tokensGeminiUsed: geminiUsed + 1
-        });
-      }
+      await updateRealUsageStats({ provider: payload.provider || storage.activeProvider, totalTokens: 140 });
     }
-
     return { success: true, data };
   } catch (error) {
     clearTimeout(timeoutId);
     let msg = error.message;
-    if (error.name === 'AbortError') {
-      msg = 'Request timed out.';
+
+    // Record quota exhaustion if error indicates rate/quota limit
+    if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const st = await chrome.storage.local.get(['realUsageStats', 'activeProvider']);
+        const stats = st.realUsageStats || { date: today, providers: {} };
+        const pKey = (payload.provider || st.activeProvider || 'gemini').toLowerCase();
+        const current = stats.providers[pKey] || { solvesToday: 0, tokensToday: 0 };
+        current.status = 'quota_exhausted';
+        stats.providers[pKey] = current;
+        await chrome.storage.local.set({ realUsageStats: stats });
+      } catch (e) {}
+    }
+
+    if (error.name === 'AbortError' || msg.includes('aborted')) {
+      msg = 'Request timed out. The backend server may be waking up or taking longer to process.';
     } else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
       msg = `Backend unreachable at ${cleanUrl}`;
     }
     return { success: false, error: msg };
+  }
+}
+
+/**
+ * Helper to record real API usage and daily counts per model
+ */
+async function updateRealUsageStats(realUsage = {}) {
+  try {
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const st = await chrome.storage.local.get(['realUsageStats', 'activeProvider']);
+    const stats = st.realUsageStats || { date: today, providers: {} };
+
+    // Reset daily counters if new calendar day
+    if (stats.date !== today) {
+      stats.date = today;
+      stats.providers = {};
+    }
+
+    const providerKey = (realUsage.provider || st.activeProvider || 'gemini').toLowerCase();
+    const current = stats.providers[providerKey] || {
+      solvesToday: 0,
+      tokensToday: 0,
+      lastSolveTokens: 0,
+      remainingRequests: providerKey === 'gemini' ? 1500 : null,
+      limitRequests: providerKey === 'gemini' ? 1500 : null,
+      status: 'healthy'
+    };
+
+    current.solvesToday = (current.solvesToday || 0) + 1;
+    const tokens = realUsage.totalTokens || 0;
+    current.tokensToday = (current.tokensToday || 0) + tokens;
+    current.lastSolveTokens = tokens;
+
+    if (providerKey === 'gemini') {
+      current.limitRequests = 1500;
+      current.remainingRequests = Math.max(0, 1500 - current.solvesToday);
+      current.status = current.remainingRequests <= 0 ? 'quota_exhausted' : 'healthy';
+    } else if (realUsage.remainingRequests !== null && realUsage.remainingRequests !== undefined) {
+      current.remainingRequests = realUsage.remainingRequests;
+      current.limitRequests = realUsage.limitRequests || 500;
+      current.status = current.remainingRequests <= 0 ? 'rate_limit_reached' : 'healthy';
+    }
+
+    stats.providers[providerKey] = current;
+    await chrome.storage.local.set({ realUsageStats: stats });
+  } catch (e) {
+    console.warn('[Background] Failed to update real usage stats:', e.message);
   }
 }
 
@@ -263,7 +313,8 @@ async function handleHealthCheck(url) {
   const start = Date.now();
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000);
+  // 20s timeout to comfortably accommodate free cloud instances (Render cold start spin up)
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
 
   try {
     const res = await fetch(`${cleanUrl}/health`, {
@@ -280,7 +331,13 @@ async function handleHealthCheck(url) {
     return { ok: false, error: `HTTP ${res.status}` };
   } catch (err) {
     clearTimeout(timeoutId);
-    return { ok: false, error: err.message || 'Connection refused' };
+    let errorMsg = err.message || 'Connection refused';
+    if (err.name === 'AbortError' || errorMsg.includes('aborted')) {
+      errorMsg = 'Connection timed out. If using a free cloud server (like Render), it may be waking up from sleep. Please wait a moment and try again.';
+    } else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
+      errorMsg = `Server unreachable at ${cleanUrl}. Check your internet connection or server status.`;
+    }
+    return { ok: false, error: errorMsg };
   }
 }
 
@@ -303,11 +360,32 @@ async function handleAuthStatus(url) {
   const effectiveUrl = url || (await chrome.storage.local.get(['backendUrl'])).backendUrl || 'https://extension-w1ac.onrender.com';
   const cleanUrl = effectiveUrl.replace(/\/+$/, '');
 
-  const res = await fetch(`${cleanUrl}/api/auth/status`);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch auth status (${res.status})`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const res = await fetch(`${cleanUrl}/api/auth/status`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch auth status (${res.status})`);
+    }
+    return await res.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    // Reliable fallback to /health if backend is active
+    try {
+      const health = await handleHealthCheck(cleanUrl);
+      if (health && health.ok && health.provider) {
+        return {
+          providers: {
+            [health.provider]: { provider: health.provider, status: 'connected', accountEmail: health.accountEmail || 'connected' }
+          },
+          active: { provider: health.provider, status: 'connected' }
+        };
+      }
+    } catch (_) {}
+    throw err;
   }
-  return await res.json();
 }
 
 /**
