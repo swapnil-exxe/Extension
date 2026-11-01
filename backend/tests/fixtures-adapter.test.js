@@ -671,3 +671,47 @@ test('Decorative images, user avatars, and feedback icons are excluded', () => {
   assert.equal(extracted.images.length, 1, 'Should only extract the 1 real diagram');
   assert.ok(extracted.images[0].includes('REAL_DIAGRAM_DATA'));
 });
+
+test('Shift + X preserves normal page brightness with transparent overlay and updates answer popup in-place', async () => {
+  const html = `
+    <div id="test-page-content">
+      <p>Sample question content on page</p>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, MoodleQuickNotification, MoodleScreenshotHandler } = dom.window;
+
+  // 1. Verify crosshair overlay preserves normal page brightness (no black backdrop, transparent overlay)
+  const promise = MoodleScreenshotHandler.promptUserSelectionArea();
+  const overlay = document.getElementById('moodle-snipping-overlay');
+  assert.ok(overlay, 'Snipping overlay must exist');
+  assert.ok(!overlay.style.background.includes('rgba(0, 0, 0'), 'Overlay must not have dark dimming background (preserves normal brightness)');
+
+  // Simulate Escape to clean up
+  dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await promise;
+
+  // 2. Verify small status appears in the exact same answer popup location
+  const notify = new MoodleQuickNotification();
+  notify.showImagePreview('data:image/png;base64,TEST_SNIPPET', 'Evaluating...');
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Must reuse the exact same answer notification host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box, 'Must reuse the exact same notification box');
+  assert.ok(box.textContent.includes('Evaluating...'), 'Shows small Evaluating... status in answer popup');
+
+  // 3. Verify word change in-place when answer arrives
+  notify.showAnswer({ option: 'B', answer: 'Cluster Sampling' });
+  assert.ok(box.textContent.includes('B — Cluster Sampling'), 'The words inside the exact same box change to the answer');
+});
+
+test('Vision support verification: isVisionSupported confirms image capability', async () => {
+  const { isVisionSupported } = await import('../services/llm-provider.js');
+
+  assert.equal(isVisionSupported('gemini', 'gemini-3.1-flash-lite'), true, 'Gemini supports vision');
+  assert.equal(isVisionSupported('gemini_1', 'gemini-3.5-flash'), true, 'Gemini pool key supports vision');
+  assert.equal(isVisionSupported('chatgpt', 'gpt-4o-mini'), true, 'GPT-4o-mini supports vision');
+  assert.equal(isVisionSupported('chatgpt', 'gpt-3.5-turbo'), false, 'GPT-3.5 does NOT support vision');
+  assert.equal(isVisionSupported('custom', 'mistral-7b'), false, 'Generic custom model does not claim vision support');
+});

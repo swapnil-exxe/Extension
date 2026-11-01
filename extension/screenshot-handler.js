@@ -27,7 +27,7 @@
           width: 100vw !important;
           height: 100vh !important;
           z-index: 2147483646 !important;
-          background: rgba(0, 0, 0, 0.3) !important;
+          background: transparent !important;
           cursor: crosshair !important;
           user-select: none !important;
           -webkit-user-select: none !important;
@@ -57,13 +57,13 @@
         hint.innerHTML = '🎯 Drag mouse to select area to send to AI &nbsp;•&nbsp; Press <kbd style="background:#F5F5F5;color:#000000;border:1px solid #E5E5E5;padding:2px 6px;border-radius:4px;font-size:12px;">Esc</kbd> to cancel';
         overlay.appendChild(hint);
 
-        // Selection rectangle box
+        // Selection rectangle box (no dark backdrop, normal brightness maintained)
         const box = document.createElement('div');
         box.style.cssText = `
           position: absolute !important;
-          border: 2px dashed #38bdf8 !important;
-          background: rgba(56, 189, 248, 0.15) !important;
-          box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45) !important;
+          border: 2px dashed #000000 !important;
+          background: rgba(0, 0, 0, 0.04) !important;
+          box-shadow: none !important;
           display: none !important;
           pointer-events: none !important;
         `;

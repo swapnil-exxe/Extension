@@ -1066,7 +1066,7 @@
       }
     }
 
-    if (notification) notification.showStatus('Capturing screenshot...');
+    if (notification) notification.showStatus('Evaluating...');
 
     try {
       const captureRes = await chrome.runtime.sendMessage({ action: 'CAPTURE_VISIBLE_TAB' });
@@ -1079,7 +1079,9 @@
         finalImageUrl = await window.MoodleScreenshotHandler.cropImage(captureRes.dataUrl, cropRect);
       }
 
-      if (notification) notification.showStatus('Evaluating with Vision AI...');
+      if (notification) {
+        notification.showStatus('Evaluating...');
+      }
 
       const response = await chrome.runtime.sendMessage({
         action: 'ANALYZE_QUESTION',

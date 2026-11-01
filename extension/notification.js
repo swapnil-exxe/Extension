@@ -225,6 +225,13 @@
     }
 
     /**
+     * Show screenshot evaluation status in the exact same corner answer notification box (small, in-place word change)
+     */
+    showImagePreview(dataUrl, statusText = 'Evaluating...') {
+      this.showStatus(statusText || 'Evaluating...');
+    }
+
+    /**
      * Render the current chunk with clickable 3-dot expansion if more content remains
      */
     renderCurrentChunk() {
