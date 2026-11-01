@@ -1,8 +1,8 @@
 # ⚡ Ad Blocker San — Intelligent AI Quiz Assistant
 
-A high-performance, zero-interference Chrome Extension (Manifest V3) and cloud-ready Node.js Express backend. Designed for seamless practice quiz assistance across **Moodle**, **Canvas**, **Blackboard**, and generic quiz websites with **multi-key Google Gemini rotation** and **OpenAI ChatGPT** integration.
+A high-performance, zero-interference Chrome Extension (Manifest V3) and cloud-ready Node.js Express backend. Designed for seamless practice quiz assistance across **Moodle**, **GeeksforGeeks**, **Scribd**, **Canvas**, **Blackboard**, and generic quiz websites with **multi-key Google Gemini rotation** and **OpenAI ChatGPT** integration.
 
-The extension operates with **zero visual interference**: the webpage remains completely unmodified — there are no permanent sidebars, floating widgets, or chat boxes. Interaction occurs exclusively through fast keyboard shortcuts and a tiny, isolated Shadow DOM notification that automatically disappears in 0.5 seconds.
+The extension operates with **zero visual interference**: the webpage remains completely unmodified — there are no permanent sidebars, floating widgets, or intrusive chat boxes. Interaction occurs exclusively through fast keyboard shortcuts and a tiny, isolated Shadow DOM notification that automatically displays the direct option and answer before cleanly disappearing.
 
 ---
 
@@ -14,7 +14,7 @@ flowchart TD
         User(["User on Quiz Page"])
         ContentScript["Content Script<br>(moodle-content.js)"]
         Notification["Shadow DOM Popup<br>(notification.js)"]
-        Snipper["Vision Cropper<br>(screenshot-handler.js)"]
+        Snipper["Stealth Snipper<br>(screenshot-handler.js)"]
         ServiceWorker["Background Worker<br>(background.js)"]
         PopupUI["Popup & Settings UI<br>(popup.js / settings.js)"]
     end
@@ -26,12 +26,12 @@ flowchart TD
     end
 
     subgraph AIProviders["AI Provider Networks"]
-        GeminiPool["Google Gemini 3.5 Flash<br>(4-Key Pool • 6,000 req/day)"]
+        GeminiPool["Google Gemini 3.1 Flash Lite<br>(4-Key Pool • 6,000 req/day)"]
         OpenAI["OpenAI API<br>(GPT-4o-mini)"]
     end
 
-    User -->|"Shift + Z (Text)"| ContentScript
-    User -->|"Shift + X (Snip)"| Snipper
+    User -->|"Shift + Z (Auto-Solve)"| ContentScript
+    User -->|"Shift + X (Stealth Snip)"| Snipper
     User -->|"Shift + A (Repeat)"| Notification
     PopupUI -->|"Switch Key / Provider"| ServiceWorker
 
@@ -49,20 +49,21 @@ flowchart TD
     LLMEngine --> Router
     Router --> ServiceWorker
     ServiceWorker --> ContentScript
-    ContentScript -->|"Render 0.5s Glance"| Notification
+    ContentScript -->|"Render Direct Answer"| Notification
 ```
 
 ---
 
-## 🔄 End-to-End Data Flow
+## 🔄 End-to-End Pipeline & Workflows
 
-### 1. Text Question Solving (<kbd>Shift + Z</kbd>)
+### 1. Shift + Z — Smart Automatic Question Solving
 ```
 User Cursor / Selection
    │
    ▼
-moodle-content.js ──────► Scans DOM for question text & options (A-F, True/False, Math/Code)
-   │
+moodle-content.js ──────► 1. Detects question container (.que, .QuizQuestionCard, or active viewport)
+   │                      2. Extracts question text, math, code & options (A-F, True/False)
+   │                      3. Detects image-only questions and converts <img>/<svg>/<canvas> to base64
    ▼
 background.js ──────────► Attaches active provider ('gemini_1'..'gemini_4' or 'chatgpt') & API key
    │
@@ -71,37 +72,50 @@ Render Cloud Backend ───► Computes SHA-256 cache key (question + options
    │
    ├─► Cache Hit  ──────► Returns cached JSON in ~10ms
    │
-   └─► Cache Miss ──────► Calls Google Gemini (thinkingBudget: 0) / OpenAI (gpt-4o-mini)
+   └─► Cache Miss ──────► Calls Google Gemini 3.1 Flash Lite (~670ms) / OpenAI (gpt-4o-mini)
                             │
                             ▼
-notification.js ◄─────── Displays corner notification for 0.5s (e.g. "B — Binary Search")
+notification.js ◄─────── Displays corner answer badge (e.g. "B — Cluster Sampling")
 ```
 
-### 2. Screen Snip & Vision Solving (<kbd>Shift + X</kbd>)
+### 2. Shift + X — Stealth Screen Snipping & Vision AI
 ```
 User presses Shift + X
    │
    ▼
-screenshot-handler.js ──► Renders interactive crosshair overlay
+screenshot-handler.js ──► 1. Activates 100% transparent overlay (ZERO screen dimming or black backdrop)
+   │                      2. No instruction banners or hint pills (completely stealthy)
+   │                      3. Crosshair cursor lets user drag-select question area
+   ▼
+Area selected ──────────► 1. In-memory canvas crops selection & compresses to JPEG
+   │                      2. Corner popup immediately shows small status: "Evaluating..."
+   ▼
+background.js ──────────► Dispatches base64 image payload to /api/answer
    │
    ▼
-User drags area ────────► Canvas crops selection in-memory & compresses to JPEG
+Gemini Vision Engine ───► Evaluates question, formulas, and diagrams directly from pixels
    │
    ▼
-background.js ──────────► Dispatches base64 payload to backend
+notification.js ◄─────── Words smoothly change in-place in that exact same small box:
+                          "Evaluating..."  ──►  "c — O(n)" (Direct option and answer only)
+```
+
+### 3. Shift + A — Instant Last Answer Recall
+```
+User presses Shift + A
    │
    ▼
-Gemini / OpenAI Vision ─► Evaluates question & diagrams directly from image pixels
+moodle-content.js ──────► Reads lastAnswer from in-memory cache (0ms network cost)
    │
    ▼
-notification.js ◄─────── Displays corner answer badge
+notification.js ◄─────── Re-displays previous answer badge instantly
 ```
 
 ---
 
-## 🔑 Multi-Key Pool & Automatic Failover
+## 🔑 Multi-Key Pool & Automatic Failover Engine
 
-The backend features an intelligent **4-key Gemini pool** with round-robin load distribution and automatic 429 quota failover:
+The backend features an intelligent **4-key Gemini pool** with round-robin load distribution, independent per-model quota management, and automatic 429 quota failover:
 
 ```mermaid
 flowchart LR
@@ -118,16 +132,18 @@ flowchart LR
     K4 -->|200 OK| Done
     GPT -->|200 OK| Done
 
-    K1 -.->|429 Quota Exhausted| K2
-    K2 -.->|429 Quota Exhausted| K3
-    K3 -.->|429 Quota Exhausted| K4
-    K4 -.->|All Keys Exhausted| GPT
+    K1 -.->|429 Rate Limit| K2
+    K2 -.->|429 Rate Limit| K3
+    K3 -.->|429 Rate Limit| K4
+    K4 -.->|All Keys Rate-Limited| GPT
 ```
 
-### Free Tier Capacity:
-* **4 Google Gemini Keys**: 1,500 requests/day per key = **6,000 free questions every 24 hours**.
-* **Automatic Daily Reset**: Daily quota automatically recharges every 24 hours at Midnight Pacific Time.
-* **Rate-Limit Reset**: Minute limit (15 RPM) resets automatically every 60 seconds.
+### Key Highlights:
+* **Primary High-Speed Model:** `gemini-3.1-flash-lite` with ~670ms latency.
+* **Per-Model Quota Failover:** Google AI Studio free tier limits (15 RPM) are per-model. If one model hits rate limits, the engine automatically cascades to candidate models (`gemini-3.1-flash-lite-preview`, `gemini-flash-lite-latest`, `gemini-3.5-flash`).
+* **Key Recovery TTL:** Exhausted keys automatically recover after a 60-second cooldown rather than being permanently locked out.
+* **Resilient 3-Tier JSON Parser:** Robust JSON repair handles markdown fences, unescaped math symbols, and regex fallback for non-standard LLM output.
+* **Daily Free Capacity:** 4 keys × 1,500 requests/day = **6,000 free questions every 24 hours**.
 
 ---
 
@@ -135,10 +151,10 @@ flowchart LR
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| <kbd>Shift + Z</kbd> | **Solve Current Question** | Extracts hovered, focused, or highlighted question + options and displays answer for 0.5s. |
-| <kbd>Shift + X</kbd> | **Snip & Solve Screen** | Opens sniper crosshair to crop any question area on screen for Vision AI solving. |
-| <kbd>Shift + A</kbd> | **Show Last Answer Again** | Re-displays the previous answer from in-memory cache without making any network request. |
-| <kbd>Esc</kbd> | **Cancel Snip** | Exits the screen crop overlay immediately. |
+| <kbd>Shift + Z</kbd> | **Smart Solve** | Extracts active text or image question + options and displays answer badge. |
+| <kbd>Shift + X</kbd> | **Stealth Snip** | Drag-select any area with 100% normal screen brightness. Direct answer displays in corner. |
+| <kbd>Shift + A</kbd> | **Repeat Answer** | Re-displays the last answer from cache without making any API request. |
+| <kbd>Esc</kbd> | **Cancel Snip** | Cancels the screen selection immediately. |
 
 > **Typing Safety**: Shortcuts are automatically disabled while typing in `<input>`, `<textarea>`, or `contenteditable` elements to prevent accidental triggers.
 
@@ -146,119 +162,91 @@ flowchart LR
 
 ## 🎨 UI & Design Principles
 
-* **Pure White Theme**: Background `#FFFFFF`, primary text `#000000`, secondary text `#555555`, borders `#E5E5E5`.
-* **Zero Disruption**: No injected sidebars or layout shifts on the quiz page.
-* **Isolated Shadow DOM**: Notifications use encapsulated Shadow DOM styling to avoid collisions with school LMS stylesheets.
-* **Progressive 3-Dot Expansion**: If an answer is lengthy, a compact preview appears with a clickable `...` expansion button.
+* **Pure White Theme**: Clean minimalist styling using `#FFFFFF` background, `#000000` text, and `#E5E5E5` borders.
+* **Zero Disruption**: Webpages are never altered; no floating sidebars or layout shifts.
+* **Stealth Selection**: Screen brightness remains completely normal when snipping; no dark backdrop, no dimming, and no instruction banner.
+* **Isolated Shadow DOM**: Notifications use encapsulated Shadow DOM styling to avoid CSS conflicts with school or quiz stylesheets.
+* **In-Place Word Updates**: Small corner badge displays `Evaluating...` and smoothly changes words in-place to the direct option and answer (e.g. `c — O(n)`).
 
 ---
 
-## 📁 Repository Structure
+## 📁 File-by-File Breakdown
 
-```
-extention/
-├── extension/                       # Chrome Extension (Manifest V3)
-│   ├── manifest.json                # MV3 extension configuration & permissions
-│   ├── background.js                # Service worker: request routing, key mapping & storage
-│   ├── moodle-content.js            # DOM question extractor & shortcut coordinator
-│   ├── screenshot-handler.js        # Interactive screen crop & JPEG compression
-│   ├── notification.js              # Corner notification popup with Shadow DOM isolation
-│   ├── popup.html / popup.js        # 5-key selection interface & active provider switch
-│   ├── settings.html / settings.js  # Position, duration & connection dashboard
-│   ├── styles.css                   # Component styles
-│   └── icons/                       # Extension icon assets (16, 32, 48, 128)
-├── backend/                         # Node.js & Express Backend Server
-│   ├── server.js                    # Express app with Helmet, CORS, Rate Limiter
-│   ├── routes/
-│   │   ├── answer.js                # POST /api/answer with SHA-256 per-key cache
-│   │   └── auth.js                  # Provider selection & auth endpoints
-│   ├── services/
-│   │   └── llm-provider.js          # Multi-key Gemini pool, OpenAI integration & JSON parser
-│   ├── validation/
-│   │   └── answer-schema.js         # Zod schemas for text & vision payloads
-│   ├── tests/
-│   │   ├── auth.test.js             # OAuth & provider switching tests
-│   │   ├── server.test.js           # API route & caching tests
-│   │   └── fixtures-adapter.test.js # DOM extraction tests across 9 Moodle layouts
-│   ├── package.json
-│   └── .env                         # Server environment configuration
-├── tests/
-│   └── fixtures/                    # Test fixtures for single-choice, math, code & dynamic quiz
-├── package.json
-└── README.md
-```
+### Chrome Extension (`/extension`)
+| File | Purpose |
+| :--- | :--- |
+| [`manifest.json`](file:///Users/swapnil/Documents/extention/extension/manifest.json) | Chrome Manifest V3 configuration, permissions (`activeTab`, `storage`, `scripting`), host permissions, and keyboard shortcut registrations. |
+| [`background.js`](file:///Users/swapnil/Documents/extention/extension/background.js) | Service worker managing API requests, backend routing, active provider selection (`gemini_1`..`gemini_4` / `chatgpt`), and tab screenshot capture (`chrome.tabs.captureVisibleTab`). |
+| [`moodle-content.js`](file:///Users/swapnil/Documents/extention/extension/moodle-content.js) | Core content script running on quiz pages. Detects active questions, extracts text/options, converts question images to base64, and coordinates keyboard shortcuts. |
+| [`screenshot-handler.js`](file:///Users/swapnil/Documents/extention/extension/screenshot-handler.js) | Interactive stealth snipping tool. Provides transparent selection rectangle (zero screen dimming) and crops selected area in-memory via HTML5 Canvas. |
+| [`notification.js`](file:///Users/swapnil/Documents/extention/extension/notification.js) | Shadow DOM corner notification badge. Handles clean pure-white UI, status updates (`Evaluating...`), word changes to answers, and progressive 3-dot expansion for long text. |
+| [`popup.html`](file:///Users/swapnil/Documents/extention/extension/popup.html) / [`popup.js`](file:///Users/swapnil/Documents/extention/extension/popup.js) | Clean popup interface showing active key status, connection indicators, and quick provider switching. |
+| [`settings.html`](file:///Users/swapnil/Documents/extention/extension/settings.html) / [`settings.js`](file:///Users/swapnil/Documents/extention/extension/settings.js) | Settings dashboard allowing customization of notification corner position, display duration, and custom API keys. |
+| [`styles.css`](file:///Users/swapnil/Documents/extention/extension/styles.css) | Shared extension UI styles adhering to the pure white theme. |
+| [`icons/`](file:///Users/swapnil/Documents/extention/extension/icons) | Extension icons in standard Chrome sizes (16px, 32px, 48px, 128px). |
+
+### Backend Service (`/backend`)
+| File | Purpose |
+| :--- | :--- |
+| [`server.js`](file:///Users/swapnil/Documents/extention/backend/server.js) | Express entry point configured with Helmet security headers, CORS origin verification, and rate limiting (60 req/min). |
+| [`routes/answer.js`](file:///Users/swapnil/Documents/extention/backend/routes/answer.js) | Primary API route (`POST /api/answer`). Implements SHA-256 LRU caching per API key/provider and routes questions to the LLM engine. |
+| [`routes/auth.js`](file:///Users/swapnil/Documents/extention/backend/routes/auth.js) | Authentication and provider status endpoints (`GET /api/auth/status`, `POST /api/auth/select`, OAuth flows). |
+| [`services/llm-provider.js`](file:///Users/swapnil/Documents/extention/backend/services/llm-provider.js) | Multi-key Gemini pool manager, OpenAI integration, candidate model rotation (`gemini-3.1-flash-lite`), vision capability verification, and resilient 3-tier JSON parser. |
+| [`validation/answer-schema.js`](file:///Users/swapnil/Documents/extention/backend/validation/answer-schema.js) | Strict Zod validation schemas validating question types, options, base64 image strings, and LLM output format. |
+| [`tests/fixtures-adapter.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/fixtures-adapter.test.js) | DOM extraction tests across Moodle and custom quiz fixtures, verifying single choice, math formulas, code snippets, image-based questions, and stealth Shift+X overlay. |
+| [`tests/server.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/server.test.js) | API route integration tests covering caching, rate limiting, and response payloads. |
+| [`tests/auth.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/auth.test.js) | Provider switching, PKCE flow validation, and CSRF protection tests. |
 
 ---
 
 ## 🚀 Installation & Quick Start
 
 ### 1. Load Extension into Chrome
-
 1. Open Google Chrome and navigate to:
    ```text
    chrome://extensions
    ```
-2. Turn ON the **Developer mode** toggle in the top-right corner.
+2. Turn **ON** the **Developer mode** toggle in the top-right corner.
 3. Click **Load unpacked** in the top-left corner.
-4. Select the **`extension`** folder.
-5. The extension is now active and connected to your cloud backend on Render!
+4. Select the **`extension`** folder from this project.
+5. The extension is now active and ready to assist!
 
 ---
 
-### 2. Cloning on a New PC (Without Logging into GitHub)
-
-Because this repository is private, you can clone and pull on any new PC using a Personal Access Token without logging into GitHub on that machine:
-
-#### Clone ONLY the `extension` folder:
-```bash
-git clone --depth 1 --filter=blob:none --sparse https://YOUR_TOKEN@github.com/swapnil-exxe/Extension.git
-cd Extension
-git sparse-checkout set extension
-```
-
-#### Pull future updates:
-```bash
-git pull
-```
+### 2. Using on Any Quiz Site
+- **Text Questions:** Click near or hover over any question and press **Shift + Z**.
+- **Diagrams / Equations / Scribd / PDF:** Press **Shift + X**, drag a box around the question area, and release.
+- **Repeat:** Press **Shift + A** anytime to view the last answer again.
 
 ---
 
-## ⚙️ Backend Environment Variables (Render)
+## 🧪 Automated Testing
 
-| Variable | Recommended Value | Description |
-| :--- | :--- | :--- |
-| `NODE_ENV` | `production` | Production environment mode |
-| `LLM_PROVIDER` | `gemini` | Default primary provider |
-| `GEMINI_MODEL` | `gemini-3.5-flash` | Sub-500ms Gemini inference model |
-| `GEMINI_API_KEY` | `AQ.Ab8RN6...EIbw` | Primary Gemini key |
-| `GEMINI_API_KEYS` | `Key1,Key2,Key3,Key4` | Comma-separated list of all 4 Gemini keys for rotation |
-| `OPENAI_API_KEY` | `sk-proj-...` | OpenAI API key for ChatGPT |
-| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI target model |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1/chat/completions` | OpenAI API endpoint |
-| `FALLBACK_TO_MOCK` | `false` | Disable mock fallback for 100% real inference |
-
----
-
-## 🧪 Testing
-
-Run the automated test suite covering all 37 tests:
+The project includes a comprehensive automated test suite with **46 tests** covering DOM adapters, multimodal image decoding, stealth overlay, caching, and rate limiting:
 
 ```bash
 npm test
 ```
 
 ```text
-✔ GET /api/auth/status returns initial providers
-✔ Fixtures 1-9: Single-choice, multiple-answer, math & code extraction
-✔ Shortcuts: Shift+Z, Shift+X, Shift+A handlers
-✔ Notification: 500ms glance duration and pure white theme
-✔ Multi-key isolation: Unique cache keys per API key and provider
+✔ GET /api/auth/status returns initial providers and active selection
+✔ POST /api/auth/start generates valid Google Gemini OAuth flow with PKCE
+✔ Fixtures 1-9: Single-choice, multiple-answer, math, code & dynamic quiz extraction
+✔ GeeksforGeeks Layout: Shift+Z automatically extracts question and options
+✔ Shortcuts 1-3: Shift+Z, Shift+X, Shift+A handlers
+✔ Image-only Moodle question with 4 text options via Shift+Z
+✔ Image + Text question includes both text prompt and image payload
+✔ Multiple images in a question are extracted in DOM order
+✔ Neighboring question isolation: images and options never leak
+✔ Shift + X preserves normal page brightness with transparent overlay and updates answer popup in-place
+✔ Vision support verification: isVisionSupported confirms image capability
+✔ POST /api/answer succeeds with single_choice, numerical, and vision questions
+✔ Cache separates different providers and models for same question
 
-ℹ tests 37 | ℹ pass 37 | ℹ fail 0 (100% Passing)
+ℹ tests 46 | ℹ pass 46 | ℹ fail 0 (100% Passing)
 ```
 
 ---
 
 ## 📄 License
-
-Private educational and revision project. Built for zero-interference quiz practice and revision.
+Private educational and revision project. Built for high-speed, zero-interference quiz practice and revision.
