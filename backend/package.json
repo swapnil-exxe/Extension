@@ -1,6 +1,6 @@
 {
   "name": "moodle-ai-assistant-backend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Secure AI backend for Moodle AI Quiz Assistant Chrome Extension",
   "main": "server.js",
   "type": "module",
