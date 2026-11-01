@@ -292,6 +292,9 @@
     formatErrorMessage(raw) {
       if (!raw || typeof raw !== 'string') return 'Could not solve question';
       let text = raw.trim();
+      if (text.includes('Extension context invalidated') || text.includes('context invalidated')) {
+        return 'Please refresh this page (Cmd+R or F5)';
+      }
       if (text.includes('{') && text.includes('}')) {
         try {
           const jsonMatch = text.match(/\{[\s\S]*\}/);

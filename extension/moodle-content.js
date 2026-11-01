@@ -1014,8 +1014,12 @@
     } catch (err) {
       if (thisRequestId !== currentRequestId) return;
       console.error('[Moodle AI] Solve error:', err.message);
+      let errMsg = err.message || 'Failed to solve question';
+      if (errMsg.includes('context invalidated')) {
+        errMsg = 'Please refresh this page (Cmd+R or F5)';
+      }
       if (notification) {
-        notification.showError(err.message || 'Failed to solve question');
+        notification.showError(errMsg);
       }
     }
   }

@@ -234,15 +234,14 @@ async function callGemini(payload, config = {}) {
     throw new Error('Gemini is not connected. Please connect your Gemini account.');
   }
 
-  const initialModel = config.model || process.env.GEMINI_MODEL || 'gemini-3.5-flash';
   const candidateModels = Array.from(new Set([
-    initialModel,
     'gemini-3.5-flash',
     'gemini-3.6-flash',
+    config.model,
+    process.env.GEMINI_MODEL,
     'gemini-3.5-flash-lite',
-    'gemini-3.8-flash',
     'gemini-flash-latest'
-  ]));
+  ].filter(Boolean)));
 
   const allImages = [];
   if (Array.isArray(payload.images) && payload.images.length > 0) {
@@ -326,7 +325,7 @@ async function callGemini(payload, config = {}) {
           method: 'POST',
           headers,
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(config.timeoutMs || 25000)
+          signal: AbortSignal.timeout(config.timeoutMs || 8000)
         });
 
         if (!response.ok) {
@@ -363,6 +362,9 @@ async function callGemini(payload, config = {}) {
       } catch (err) {
         lastError = err;
         if (
+          err.name === 'TimeoutError' ||
+          err.message.includes('timeout') ||
+          err.message.includes('aborted') ||
           err.message.includes('400') ||
           err.message.includes('INVALID_ARGUMENT') ||
           err.message.includes('404') ||
