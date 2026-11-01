@@ -34,29 +34,7 @@
           overflow: hidden !important;
         `;
 
-        // Hint bar at top center
-        const hint = document.createElement('div');
-        hint.style.cssText = `
-          position: absolute !important;
-          top: 16px !important;
-          left: 50% !important;
-          transform: translateX(-50%) !important;
-          background: #FFFFFF !important;
-          color: #000000 !important;
-          padding: 8px 18px !important;
-          border-radius: 9999px !important;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-          font-size: 13px !important;
-          font-weight: 600 !important;
-          letter-spacing: 0.2px !important;
-          box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
-          border: 1px solid #E5E5E5 !important;
-          pointer-events: none !important;
-          white-space: nowrap !important;
-        `;
-        hint.innerHTML = '🎯 Drag mouse to select area to send to AI &nbsp;•&nbsp; Press <kbd style="background:#F5F5F5;color:#000000;border:1px solid #E5E5E5;padding:2px 6px;border-radius:4px;font-size:12px;">Esc</kbd> to cancel';
-        overlay.appendChild(hint);
-
+        // Hint bar removed to keep overlay completely clean, invisible, and stealthy
         // Selection rectangle box (no dark backdrop, normal brightness maintained)
         const box = document.createElement('div');
         box.style.cssText = `
