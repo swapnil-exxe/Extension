@@ -44,6 +44,23 @@ function normalizeProvider(p) {
 }
 
 /**
+ * Checks whether the given provider and model support multimodal image input
+ */
+export function isVisionSupported(provider = '', model = '') {
+  const norm = normalizeProvider(provider);
+  if (norm === 'gemini') return true;
+  if (norm === 'chatgpt') {
+    const m = (model || '').toLowerCase();
+    if (m.includes('gpt-3.5') || m.includes('instruct') || m.includes('babbage') || m.includes('davinci')) {
+      return false;
+    }
+    return true;
+  }
+  if (norm === 'mock') return true;
+  return false;
+}
+
+/**
  * PKCE Helper: generates code_verifier and S256 code_challenge
  */
 export function generatePKCE() {
@@ -227,16 +244,23 @@ async function callGemini(payload, config = {}) {
     'gemini-flash-latest'
   ]));
 
-  const hasImage = Boolean(payload.image);
+  const allImages = [];
+  if (Array.isArray(payload.images) && payload.images.length > 0) {
+    allImages.push(...payload.images);
+  } else if (payload.image) {
+    allImages.push(payload.image);
+  }
+  const hasImage = allImages.length > 0;
   const userPrompt = buildUserPrompt({ ...payload, hasImage });
 
   const parts = [];
 
-  // Add vision image if present
-  if (payload.image) {
+  // Add all vision images in DOM order
+  for (const imgStr of allImages) {
+    if (!imgStr) continue;
     let mimeType = 'image/jpeg';
-    let base64Data = payload.image;
-    const match = payload.image.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+    let base64Data = imgStr;
+    const match = imgStr.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
     if (match) {
       mimeType = match[1];
       base64Data = match[2];
@@ -379,18 +403,25 @@ async function callOpenAI(payload, config = {}) {
 
   const model = config.model || process.env.OPENAI_MODEL || 'gpt-4o-mini';
   const url = config.baseUrl || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/chat/completions';
-  const hasImage = Boolean(payload.image);
+  const allImages = [];
+  if (Array.isArray(payload.images) && payload.images.length > 0) {
+    allImages.push(...payload.images);
+  } else if (payload.image) {
+    allImages.push(payload.image);
+  }
+  const hasImage = allImages.length > 0;
   const userPrompt = buildUserPrompt({ ...payload, hasImage });
 
   const userContent = [];
-  if (payload.image) {
-    const imageUrl = payload.image.startsWith('data:')
-      ? payload.image
-      : `data:image/jpeg;base64,${payload.image}`;
+  for (const imgStr of allImages) {
+    if (!imgStr) continue;
+    const imageUrl = imgStr.startsWith('data:')
+      ? imgStr
+      : `data:image/jpeg;base64,${imgStr}`;
 
     userContent.push({
       type: 'image_url',
-      image_url: { url: imageUrl, detail: 'low' }
+      image_url: { url: imageUrl, detail: 'high' }
     });
   }
   userContent.push({ type: 'text', text: userPrompt });
@@ -631,6 +662,16 @@ export async function getLLMAnswer(payload, options = {}) {
   }
   provider = provider.toLowerCase();
   if (provider === 'openai') provider = 'chatgpt';
+
+  // Verify vision capability if question contains image(s)
+  const allImages = Array.isArray(payload.images) && payload.images.length > 0
+    ? payload.images
+    : (payload.image ? [payload.image] : []);
+
+  if (allImages.length > 0 && !isVisionSupported(provider, options.model)) {
+    throw new Error(`The configured provider "${provider}" does not support image-based questions. Please switch to Google Gemini or ChatGPT.`);
+  }
+
   let rawResult;
 
   try {

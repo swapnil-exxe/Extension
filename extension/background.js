@@ -86,6 +86,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep port open
   }
 
+  if (message.action === 'FETCH_IMAGE_AS_DATA_URL') {
+    fetch(message.url)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.blob();
+      })
+      .then(blob => {
+        const reader = new FileReader();
+        reader.onloadend = () => sendResponse({ success: true, dataUrl: reader.result });
+        reader.onerror = () => sendResponse({ success: false, error: 'Could not decode image' });
+        reader.readAsDataURL(blob);
+      })
+      .catch(err => {
+        sendResponse({ success: false, error: err.message || 'Image fetch failed' });
+      });
+    return true; // Keep port open
+  }
+
   if (message.action === 'ANALYZE_QUESTION') {
     handleAnalyzeQuestion(message.payload)
       .then(sendResponse)

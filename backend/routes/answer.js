@@ -20,7 +20,9 @@ function computeCacheKey(payload, provider = '', model = '') {
     type: payload.questionType || 'single_choice',
     q: (payload.question || '').trim().toLowerCase(),
     opts: (payload.options || []).map(o => `${o.id}:${o.text.trim().toLowerCase()}`).sort(),
-    img: payload.image ? crypto.createHash('md5').update(payload.image).digest('hex') : null,
+    img: (payload.images && payload.images.length > 0)
+      ? crypto.createHash('md5').update(payload.images.join('|')).digest('hex')
+      : (payload.image ? crypto.createHash('md5').update(payload.image).digest('hex') : null),
     provider: (payload.provider || provider || '').toLowerCase(),
     model: (payload.model || model || '').toLowerCase(),
     apiKey: payload.apiKey ? payload.apiKey.slice(-8) : null

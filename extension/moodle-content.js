@@ -263,6 +263,31 @@
   }
 
   /**
+   * Check if element is a valid question container (has at least 2 options or question inputs)
+   */
+  function isValidQuestionContainer(el) {
+    if (!el || el.children.length === 0) return false;
+    if (el.matches('header, nav, footer, [class*="chip" i], [class*="tag" i], [class*="badge" i], [class*="sidebar" i]')) return false;
+    if (el.closest('header, nav, footer, [class*="chip" i], [class*="tag" i]')) return false;
+
+    // Must have radio/checkbox inputs or option items
+    const inputs = el.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+    if (inputs.length >= 2) return true;
+
+    const optionEls = el.querySelectorAll('[class*="optionContainer" i], [class*="option-item" i], [class*="choice" i], [class*="answer" i], li');
+    const textOptions = Array.from(optionEls).filter(o => o.textContent.trim().length > 0 && o.textContent.trim().length < 300);
+    if (textOptions.length >= 2) return true;
+
+    // Has question prompt and option text
+    const text = el.textContent.trim();
+    if (text.length >= 20 && (/^(?:(?:\([A-Da-d]\))|[A-Da-d][\.\:\)])/m.test(text) || text.includes('?'))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Get all question containers on the page (filtered to visible ones)
    */
   function getQuestionContainers() {
@@ -272,11 +297,18 @@
       return visible.length > 0 ? visible : list;
     }
 
-    list = Array.from(document.querySelectorAll('[data-question-id], .question-container, .formulation, [class*="quiz-question"], [class*="question-card"], fieldset, .quiz-card'));
-    if (list.length > 0) {
-      const unique = Array.from(new Set(list.map(el => el.closest('.que') || el)));
-      const visible = unique.filter(isElementVisible);
-      return visible.length > 0 ? visible : unique;
+    const rawCandidates = Array.from(document.querySelectorAll(
+      '[data-question-id], .question-container, .formulation, fieldset, .quiz-card, ' +
+      '[class*="questionsAndOptions" i], [class*="quizQuestion" i], [class*="quizComponent" i], ' +
+      '[class*="quiz-question" i], [class*="question-card" i], [class*="question_holder" i], ' +
+      '[class*="bix-div-container" i]'
+    )).filter(isValidQuestionContainer);
+
+    if (rawCandidates.length > 0) {
+      // Pick innermost containers (leaf question cards, not outer wrappers)
+      const innermost = rawCandidates.filter(c => !rawCandidates.some(other => other !== c && c.contains(other)));
+      const visible = innermost.filter(isElementVisible);
+      return visible.length > 0 ? visible : innermost;
     }
 
     // Dynamic grouping by radio inputs
@@ -294,7 +326,28 @@
         let container = findLowestCommonAncestor(group);
         if (container) {
           if (container.parentElement && container.parentElement !== document.body) {
-            const hasHeading = container.parentElement.querySelector('h1, h2, h3, h4, h5, h6, [class*="title"], p');
+            const hasHeading = container.parentElement.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i], p');
+            if (hasHeading) container = container.parentElement;
+          }
+          containers.push(container);
+        }
+      }
+    }
+
+    // Dynamic grouping by custom option items (GeeksforGeeks, IndiaBIX, Sanfoundry, etc.)
+    const customOptions = Array.from(document.querySelectorAll(
+      '[class*="optionContainer" i], [class*="option-item" i], [class*="choice-item" i], [class*="answer-item" i]'
+    )).filter(el => {
+      const text = el.textContent.trim();
+      return text.length > 0 && text.length < 300;
+    });
+    if (customOptions.length >= 2) {
+      const leaves = customOptions.filter(el => !customOptions.some(other => other !== el && el.contains(other)));
+      if (leaves.length >= 2) {
+        let container = findLowestCommonAncestor(leaves);
+        if (container) {
+          if (container.parentElement && container.parentElement !== document.body && container.parentElement.tagName !== 'MAIN') {
+            const hasHeading = container.parentElement.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i], p');
             if (hasHeading) container = container.parentElement;
           }
           containers.push(container);
@@ -457,6 +510,203 @@
   }
 
   /**
+   * Check if an element is a relevant question image (and not a decor icon or inside answer options)
+   */
+  function isRelevantQuestionImage(el, questionEl) {
+    if (!el || !questionEl.contains(el)) return false;
+
+    // Must NOT be inside answer choices, feedback, user info, or comments
+    const excludedAncestor = el.closest('.answer, .ablock, .info, .feedback, .outcome, .comment, .options-group, [class*="optionContainer" i], [class*="option-item" i], [class*="choice-item" i], [class*="answer-item" i]');
+    if (excludedAncestor && excludedAncestor !== questionEl && questionEl.contains(excludedAncestor)) {
+      return false;
+    }
+
+    // Exclude icons, avatars, flags, decorative images
+    if (el.classList.contains('icon') || el.classList.contains('userpicture') || el.classList.contains('activityicon') || el.classList.contains('smallicon')) {
+      return false;
+    }
+    if (el.getAttribute('role') === 'presentation' || el.getAttribute('aria-hidden') === 'true') {
+      return false;
+    }
+
+    // Check dimensions if available (exclude spacers, 1x1 pixels, tiny bullets < 18px)
+    const attrW = parseInt(el.getAttribute('width'), 10);
+    const attrH = parseInt(el.getAttribute('height'), 10);
+    if (!isNaN(attrW) && !isNaN(attrH) && (attrW < 18 || attrH < 18)) {
+      return false;
+    }
+
+    const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+    if (rect && rect.width > 0 && rect.height > 0 && (rect.width < 18 || rect.height < 18)) {
+      return false;
+    }
+    if (el.tagName === 'IMG' && el.naturalWidth > 0 && el.naturalWidth < 18 && el.naturalHeight > 0 && el.naturalHeight < 18) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Find all relevant images strictly within the question prompt/formulation in DOM order
+   */
+  function extractQuestionImageElements(questionEl) {
+    if (!questionEl) return [];
+    const qArea = questionEl.querySelector('.qtext') ||
+                  questionEl.querySelector('.formulation') ||
+                  questionEl;
+
+    return Array.from(qArea.querySelectorAll('img, svg, canvas')).filter(el => isRelevantQuestionImage(el, questionEl));
+  }
+
+  /**
+   * Get initial string representation or source of an image element
+   */
+  function getInitialImageSource(el) {
+    if (!el) return '';
+    if (el.tagName === 'IMG') {
+      let src = el.currentSrc || el.src || el.getAttribute('src');
+      if (!src || src.startsWith('blob:') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src')) {
+        src = el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original') || src || '';
+      }
+      if (!src && el.getAttribute('srcset')) {
+        const parts = el.getAttribute('srcset').split(',').map(s => s.trim().split(/\s+/)[0]);
+        src = parts[parts.length - 1] || parts[0] || '';
+      }
+      return src;
+    }
+    if (el.tagName === 'CANVAS') {
+      try {
+        return el.toDataURL('image/png');
+      } catch (e) {
+        return 'canvas:accessible';
+      }
+    }
+    if (el.tagName === 'SVG' || el instanceof (window.SVGElement || Object)) {
+      try {
+        const serializer = new (window.XMLSerializer || XMLSerializer)();
+        const svgStr = serializer.serializeToString(el);
+        const base64 = typeof btoa === 'function' ? btoa(unescape(encodeURIComponent(svgStr))) : Buffer.from(svgStr).toString('base64');
+        return `data:image/svg+xml;base64,${base64}`;
+      } catch (e) {
+        return 'svg:diagram';
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Convert an image element (img, svg, canvas) into a base64 data URL
+   */
+  async function convertImageElementToDataUrl(el) {
+    if (!el) return null;
+
+    if (el.tagName === 'CANVAS') {
+      try {
+        const dataUrl = el.toDataURL('image/png');
+        if (dataUrl && dataUrl.startsWith('data:image/')) return dataUrl;
+      } catch (e) {
+        throw new Error('Inaccessible Canvas: Canvas is tainted or security restricted.');
+      }
+    }
+
+    if (el.tagName === 'SVG' || el instanceof (window.SVGElement || Object)) {
+      const serializer = new (window.XMLSerializer || XMLSerializer)();
+      const svgStr = serializer.serializeToString(el);
+      const base64 = typeof btoa === 'function' ? btoa(unescape(encodeURIComponent(svgStr))) : Buffer.from(svgStr).toString('base64');
+      return `data:image/svg+xml;base64,${base64}`;
+    }
+
+    if (el.tagName === 'IMG') {
+      let src = el.currentSrc || el.src || el.getAttribute('src');
+      if (!src || src.startsWith('blob:') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src')) {
+        src = el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original') || src;
+      }
+      if (!src && el.getAttribute('srcset')) {
+        const parts = el.getAttribute('srcset').split(',').map(s => s.trim().split(/\s+/)[0]);
+        src = parts[parts.length - 1] || parts[0];
+      }
+
+      if (!src) {
+        throw new Error('Inaccessible image: <img> has no valid src or srcset attribute.');
+      }
+
+      if (src.startsWith('data:image/')) {
+        return src;
+      }
+
+      // Try canvas conversion if loaded in DOM
+      try {
+        if (el.naturalWidth > 0 && typeof document.createElement === 'function') {
+          const canvas = document.createElement('canvas');
+          canvas.width = el.naturalWidth;
+          canvas.height = el.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(el, 0, 0);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+            if (dataUrl && dataUrl.startsWith('data:image/')) return dataUrl;
+          }
+        }
+      } catch (canvasErr) {
+        // Tainted canvas by CORS, fall through to background fetch
+      }
+
+      // Fetch via background or direct fetch
+      const fetched = await fetchImageAsDataUrl(src);
+      if (fetched) return fetched;
+
+      throw new Error(`Inaccessible image: Could not load or decode image from ${src.slice(0, 60)}...`);
+    }
+
+    return null;
+  }
+
+  /**
+   * Helper to fetch an image and convert it to a base64 data URL
+   */
+  async function fetchImageAsDataUrl(url) {
+    if (!url) return null;
+    if (url.startsWith('data:image/')) return url;
+
+    // 1. Try background fetch if chrome.runtime is available
+    if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          action: 'FETCH_IMAGE_AS_DATA_URL',
+          url
+        });
+        if (response) {
+          if (response.success && response.dataUrl) {
+            return response.dataUrl;
+          }
+          if (response.success === false) {
+            return null; // Explicit failure from background fetch
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 2. Direct fetch fallback
+    if (typeof fetch === 'function') {
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          const blob = await res.blob();
+          return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        }
+      } catch (e) {}
+    }
+
+    return null;
+  }
+
+  /**
    * Extract question text and options universally
    */
   function extractQuestionData(questionEl) {
@@ -467,41 +717,55 @@
     const qtextElem = questionEl.querySelector('.qtext') ||
                       questionEl.querySelector('.formulation .qtext') ||
                       questionEl.querySelector('.formulation') ||
-                      questionEl.querySelector('.q-title, h1, h2, h3, h4, h5, h6, legend, [class*="question-text"], [class*="prompt"]');
+                      questionEl.querySelector('.q-title, h1, h2, h3, h4, h5, h6, legend, [class*="question-text" i], [class*="prompt" i], p');
 
     if (qtextElem) {
       const clone = qtextElem.cloneNode(true);
-      clone.querySelectorAll('.answer, input, .prompt, .options-group').forEach(el => el.remove());
+      clone.querySelectorAll('.answer, input, .prompt, .options-group, .info, .state, .grade').forEach(el => el.remove());
       questionText = extractFormattedText(clone);
     }
 
+    // Filter out Moodle question numbers / headers like "Question 1", "Not yet answered"
+    if (/^Question\s*\d*[\.\:]?$/i.test(questionText.trim()) || /^Not yet answered/i.test(questionText.trim())) {
+      questionText = '';
+    }
+
     if (!questionText || questionText.length < 3) {
-      const allText = extractFormattedText(questionEl);
-      const lines = allText.split('\n').map(l => l.trim()).filter(Boolean);
+      const cloneQ = questionEl.cloneNode(true);
+      cloneQ.querySelectorAll('.answer, input, .prompt, .options-group, .info, .state, .grade, .outcome, .feedback').forEach(el => el.remove());
+      const allText = extractFormattedText(cloneQ);
+      const lines = allText.split('\n').map(l => l.trim()).filter(l => Boolean(l) && !/^Question\s*\d*[\.\:]?$/i.test(l) && !/^Not yet answered/i.test(l));
       const firstOptIdx = lines.findIndex(l => /^(?:[A-Za-z][\.\:\)\-]|(?:\([A-Za-z0-9]\))|\d+[\.\:\)\-])\s+/i.test(l));
       if (firstOptIdx > 0) {
         questionText = lines.slice(0, firstOptIdx).join(' ');
-      } else {
+      } else if (lines.length > 0) {
         const qLine = lines.find(l => /^\d+[\.\:\)]/.test(l) || l.endsWith('?')) || lines[0] || '';
         questionText = qLine;
       }
     }
 
+    if (/^Question\s*\d*[\.\:]?$/i.test(questionText.trim()) || /^Not yet answered/i.test(questionText.trim())) {
+      questionText = '';
+    }
 
-    // 1b. Detect images, diagrams, SVGs, or Canvas
+    // 1b. Detect images strictly within this question container in DOM order
+    const relevantImages = extractQuestionImageElements(questionEl);
     const diagrams = [];
-    questionEl.querySelectorAll('img, svg, canvas').forEach(diag => {
-      if (diag.classList.contains('icon') || diag.getAttribute('role') === 'presentation') return;
-      const rect = diag.getBoundingClientRect ? diag.getBoundingClientRect() : null;
-      if (rect && (rect.width < 18 || rect.height < 18)) return;
-
+    relevantImages.forEach(diag => {
       const alt = diag.getAttribute('alt') || diag.getAttribute('title') || diag.getAttribute('aria-label') || '';
       if (alt.trim()) {
         diagrams.push(alt.trim());
       }
     });
 
-    if (diagrams.length > 0 && !questionText.includes('[Diagram:')) {
+    const isImageOnly = (!questionText || questionText.trim().length === 0) && relevantImages.length > 0;
+    const hasImages = relevantImages.length > 0;
+
+    if (isImageOnly) {
+      questionText = diagrams.length > 0
+        ? `Solve the question shown in the attached image: ${diagrams.join('; ')}`
+        : 'Solve the question shown in the attached image.';
+    } else if (diagrams.length > 0 && !questionText.includes('[Diagram:')) {
       questionText += `\n[Diagram / Visual: ${diagrams.join('; ')}]`;
     }
 
@@ -514,9 +778,9 @@
 
     // If no standard inputs found, detect custom option items / labels / list items
     if (inputs.length === 0) {
-      const candidates = Array.from(questionEl.querySelectorAll('label, [class*="option"], [class*="choice"], [class*="answer"], [class*="item"], li')).filter(el => {
-        if (el.matches('h1, h2, h3, h4, h5, h6, legend, [class*="title"], [class*="prompt"]')) return false;
-        if (el.closest('h1, h2, h3, h4, h5, h6, legend, [class*="title"], [class*="prompt"]')) return false;
+      const candidates = Array.from(questionEl.querySelectorAll('label, [class*="optionContainer" i], [class*="option" i], [class*="choice" i], [class*="answer" i], [class*="item" i], li')).filter(el => {
+        if (el.matches('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i]')) return false;
+        if (el.closest('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i]')) return false;
         const text = el.textContent.trim();
         return text.length > 0 && text.length < 250;
       });
@@ -565,9 +829,11 @@
         formattedText = text[0].toUpperCase() + text.slice(1).toLowerCase();
       } else {
         const letterIndex = String.fromCharCode(65 + idx);
-        const letterMatch = text.match(/^([A-Za-z])[\.\:\)\-]\s*(.*)$/);
+        const letterMatch = text.match(/^(?:(?:\(([A-Za-z])\))|(?:\[([A-Za-z])\])|([A-Za-z])[\.\:\)\-])\s*(.*)$/);
         if (letterMatch) {
-          formattedText = `${letterMatch[1].toUpperCase()}. ${letterMatch[2]}`;
+          const letter = (letterMatch[1] || letterMatch[2] || letterMatch[3]).toUpperCase();
+          const content = letterMatch[4] ? letterMatch[4].trim() : text;
+          formattedText = `${letter}. ${content}`;
         } else {
           formattedText = `${letterIndex}. ${text}`;
         }
@@ -585,7 +851,9 @@
     const isCoding = /```|public static|def |function\(|int main/i.test(questionText) || questionEl.querySelector('pre, code') !== null;
 
     let questionType = 'single_choice';
-    if (isTrueFalse || questionEl.classList.contains('truefalse')) {
+    if (isImageOnly) {
+      questionType = 'image_based';
+    } else if (isTrueFalse || questionEl.classList.contains('truefalse')) {
       questionType = 'true_false';
     } else if (hasCheckboxes) {
       questionType = 'multiple_choice';
@@ -606,8 +874,12 @@
       questionNumber,
       questionType,
       hasDiagram: diagrams.length > 0,
-      question: questionText || 'Answer the following question',
-      options
+      hasImage: hasImages,
+      isImageBased: isImageOnly,
+      question: questionText || (hasImages ? 'Solve the question shown in the attached image.' : 'Answer the following question'),
+      options,
+      images: relevantImages.map(el => getInitialImageSource(el)),
+      imageElements: relevantImages
     };
   }
 
@@ -635,17 +907,21 @@
       }
     }
 
+    // 2b. Full-Page Fallback Scan for single-question pages (GeeksforGeeks, IndiaBIX, Sanfoundry, etc.)
+    if (!data || (!data.question && (!data.options || data.options.length === 0) && (!data.images || data.images.length === 0))) {
+      const mainEl = document.querySelector('main, article, [role="main"], [class*="mainContent" i], #content, .content, .container, body');
+      if (mainEl) {
+        const fallbackData = extractQuestionData(mainEl);
+        if (fallbackData && (fallbackData.question || fallbackData.hasImage) && fallbackData.options && fallbackData.options.length >= 2) {
+          data = fallbackData;
+        }
+      }
+    }
+
     const extractionDurationMs = Math.round(performance.now() - extractStartTime);
 
     // 3. If no active question could be confidently detected, report error instead of guessing
-    if (!data || (!data.question && (!data.options || data.options.length === 0))) {
-      // If the page is an image URL (e.g. .png / .jpg) or contains an image, automatically fallback to Vision solve
-      const isImageDoc = /\.(png|jpe?g|webp|gif)($|\?)/i.test(window.location.pathname) || document.querySelector('img');
-      if (isImageDoc) {
-        console.log('[Moodle AI] Image-based question detected on page, falling back to Vision Screenshot...');
-        return solveQuestionScreenshot();
-      }
-
+    if (!data || (!data.question && (!data.options || data.options.length === 0) && (!data.images || data.images.length === 0))) {
       console.warn('[Moodle AI] Could not confidently identify active question.');
       if (notification) {
         notification.showError('UNCERTAIN — Question needs verification');
@@ -653,14 +929,34 @@
       return;
     }
 
-    // 4. Fallback to Vision only if question is genuinely visual/empty text
-    if (!data.question || data.question.trim().length === 0) {
-      console.log(`[Moodle AI] Text empty (extracted in ${extractionDurationMs}ms), falling back to Vision Screenshot...`);
-      return solveQuestionScreenshot();
+    // 4. Resolve all images if question is image-based or contains images
+    let resolvedImages = [];
+    if (data.imageElements && data.imageElements.length > 0) {
+      try {
+        if (notification) notification.showStatus('Decoding question image...');
+        for (const el of data.imageElements) {
+          const dataUrl = await convertImageElementToDataUrl(el);
+          if (dataUrl) resolvedImages.push(dataUrl);
+        }
+      } catch (imgErr) {
+        console.error('[Moodle AI] Image decoding error:', imgErr.message);
+        if (notification) {
+          notification.showError('Could not decode question image. Press Shift+X to snip manually.');
+        }
+        return;
+      }
+    }
+
+    // If marked as image-based question, verify we successfully decoded at least one image
+    if (data.isImageBased && resolvedImages.length === 0) {
+      if (notification) {
+        notification.showError('Could not decode question image. Press Shift+X to snip manually.');
+      }
+      return;
     }
 
     // 5. Duplicate request check (same question just solved)
-    const currentQuestionHash = hashString(data.question + (data.options || []).map(o => o.text).join(''));
+    const currentQuestionHash = hashString((data.question || '') + (data.options || []).map(o => o.text).join('') + resolvedImages.join(''));
     if (lastAnswer && lastProcessedQuestionHash === currentQuestionHash && (now - lastSolveRequestTime < 2000)) {
       if (notification) notification.showAnswer(lastAnswer);
       return;
@@ -669,19 +965,26 @@
     // Cancel / invalidate obsolete in-flight requests
     const thisRequestId = ++currentRequestId;
 
-    if (notification) notification.showStatus('Analyzing question...');
+    if (notification) notification.showStatus(resolvedImages.length > 0 ? 'Analyzing with Vision AI...' : 'Analyzing question...');
 
     try {
       const startTime = performance.now();
+      const payload = {
+        platform: 'moodle',
+        questionType: data.questionType || (resolvedImages.length > 0 ? 'image_based' : 'single_choice'),
+        question: data.question || (resolvedImages.length > 0 ? 'Solve the question shown in the attached image.' : ''),
+        options: data.options || [],
+        extractionDurationMs
+      };
+
+      if (resolvedImages.length > 0) {
+        payload.image = resolvedImages[0];
+        payload.images = resolvedImages;
+      }
+
       const response = await chrome.runtime.sendMessage({
         action: 'ANALYZE_QUESTION',
-        payload: {
-          platform: 'moodle',
-          questionType: data.questionType || 'single_choice',
-          question: data.question,
-          options: data.options || [],
-          extractionDurationMs
-        }
+        payload
       });
 
       // Discard obsolete response if another question was triggered while waiting

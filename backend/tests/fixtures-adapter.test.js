@@ -40,6 +40,12 @@ function setupDOM(htmlContent, mockAnswer = { option: 'B', answer: 'Binary Searc
         if (msg.action === 'CAPTURE_VISIBLE_TAB') {
           return Promise.resolve({ success: true, dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' });
         }
+        if (msg.action === 'FETCH_IMAGE_AS_DATA_URL') {
+          if (msg.url && (msg.url.includes('inaccessible') || msg.url.includes('broken'))) {
+            return Promise.resolve({ success: false, error: 'Inaccessible image: HTTP 404' });
+          }
+          return Promise.resolve({ success: true, dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' });
+        }
         if (msg.action === 'ANALYZE_QUESTION') {
           return Promise.resolve({ success: true, data: mockAnswer });
         }
@@ -212,6 +218,30 @@ test('Fixture 9: Custom Modern Quiz Layout (User Screenshot Replica) extraction'
   assert.ok(q5.question.includes('What would you do in your spare time'));
   assert.equal(q5.options.length, 3);
   assert.ok(q5.options.some(o => o.text.includes('Hunt')));
+});
+
+test('GeeksforGeeks Layout: Shift+Z automatically extracts question and options', async () => {
+  const gfgHtml = `
+    <div class="QuizDiscussitPage_js_mainContentContainer__yrbZu">
+      <div class="QuizQuestionDiscuss_quizQuestionDiscussMainContainer_questionsAndOptions__2TYvt">
+        <p>A market research firm wants to estimate the average annual household income in a large country. The country is divided into 50 states. The firm's methodology is as follows: first, it randomly selects 5 of the 50 states. Then, within each of these 5 selected states, it obtains data from every household. This sampling strategy is an example of:</p>
+        <div class="QuizQuestionDiscuss_quizQuestionDiscussMainContainer_questionsAndOptions_optionContainer__OwS9_">Stratified Random Sampling</div>
+        <div class="QuizQuestionDiscuss_quizQuestionDiscussMainContainer_questionsAndOptions_optionContainer__OwS9_">Cluster Sampling</div>
+        <div class="QuizQuestionDiscuss_quizQuestionDiscussMainContainer_questionsAndOptions_optionContainer__OwS9_">Simple Random Sampling</div>
+        <div class="QuizQuestionDiscuss_quizQuestionDiscussMainContainer_questionsAndOptions_optionContainer__OwS9_">Systematic Sampling</div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(gfgHtml, { option: 'B', answer: 'Cluster Sampling', status: 'success' });
+  const { MoodleAdapter } = dom.window;
+
+  await MoodleAdapter.solveCurrentQuestion();
+
+  const analyzeCall = dom.window.sentMessages.find(m => m.action === 'ANALYZE_QUESTION');
+  assert.ok(analyzeCall, 'Should have sent ANALYZE_QUESTION message');
+  assert.ok(analyzeCall.payload.question.includes('household income'));
+  assert.equal(analyzeCall.payload.options.length, 4);
+  assert.ok(analyzeCall.payload.options[1].text.includes('Cluster Sampling'));
 });
 
 test('Shortcut 1 (Shift+Z): solveCurrentQuestion extracts text and stores lastAnswer', async () => {
@@ -440,4 +470,204 @@ test('UI Theme Files verification: Popup and Settings use pure white #FFFFFF the
   assert.ok(settingsHtml.includes('background: #FFFFFF'));
   assert.ok(settingsHtml.includes('color: #000000'));
   assert.ok(!settingsHtml.includes('background: #09090b'), 'Settings must not have dark background #09090b');
+});
+
+// =========================================================================
+// Image-Aware Moodle Extraction Tests (Shift + Z)
+// =========================================================================
+
+test('Acceptance Test: Image-only Moodle question with 4 text options via Shift+Z', async () => {
+  const html = `
+    <div class="que multichoice clearfix" id="q_image_only">
+      <div class="info">
+        <h3 class="no">Question <span class="qno">1</span></h3>
+      </div>
+      <div class="content">
+        <div class="formulation clearfix">
+          <div class="qtext">
+            <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Circuit diagram showing an operational amplifier with negative feedback" />
+          </div>
+          <div class="answer">
+            <div class="r0"><input type="radio" name="q1" id="q1_a"><label for="q1_a">a. Inverting Amplifier</label></div>
+            <div class="r1"><input type="radio" name="q1" id="q1_b"><label for="q1_b">b. Non-inverting Amplifier</label></div>
+            <div class="r2"><input type="radio" name="q1" id="q1_c"><label for="q1_c">c. Voltage Follower</label></div>
+            <div class="r3"><input type="radio" name="q1" id="q1_d"><label for="q1_d">d. Differential Amplifier</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html, { option: 'A', answer: 'Inverting Amplifier', status: 'success' });
+  const { MoodleAdapter } = dom.window;
+
+  // Trigger Shift+Z
+  await MoodleAdapter.solveCurrentQuestion();
+
+  // Verify ANALYZE_QUESTION message payload
+  const analyzeCall = dom.window.sentMessages.find(m => m.action === 'ANALYZE_QUESTION');
+  assert.ok(analyzeCall, 'Should send ANALYZE_QUESTION');
+  assert.equal(analyzeCall.payload.questionType, 'image_based');
+  assert.ok(analyzeCall.payload.image, 'Must include base64 question image');
+  assert.ok(analyzeCall.payload.image.startsWith('data:image/'));
+  assert.equal(analyzeCall.payload.options.length, 4, 'Must include all 4 text options');
+  assert.ok(analyzeCall.payload.options[0].text.includes('Inverting Amplifier'));
+  assert.ok(analyzeCall.payload.options[1].text.includes('Non-inverting Amplifier'));
+});
+
+test('Image + Text Moodle question includes both text prompt and image payload', async () => {
+  const html = `
+    <div class="que multichoice" id="q_img_text">
+      <div class="formulation">
+        <div class="qtext">
+          <p>Find the current flowing through resistor R1 in the circuit below:</p>
+          <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" alt="Resistor circuit diagram" />
+        </div>
+        <div class="answer">
+          <div class="r0"><label><input type="radio" name="q_it" id="q_it_1"> 2.5 A</label></div>
+          <div class="r1"><label><input type="radio" name="q_it" id="q_it_2"> 5.0 A</label></div>
+          <div class="r2"><label><input type="radio" name="q_it" id="q_it_3"> 10 A</label></div>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html, { option: 'B', answer: '5.0 A', status: 'success' });
+  const { MoodleAdapter } = dom.window;
+
+  await MoodleAdapter.solveCurrentQuestion();
+
+  const analyzeCall = dom.window.sentMessages.find(m => m.action === 'ANALYZE_QUESTION');
+  assert.ok(analyzeCall);
+  assert.ok(analyzeCall.payload.question.includes('resistor R1'));
+  assert.ok(analyzeCall.payload.image);
+  assert.equal(analyzeCall.payload.options.length, 3);
+});
+
+test('Multiple images in a question are extracted in DOM order', async () => {
+  const html = `
+    <div class="que multichoice" id="q_multi_img">
+      <div class="formulation">
+        <div class="qtext">
+          <img src="data:image/png;base64,IMAGE_ONE_DATA" alt="Diagram 1" />
+          <svg width="100" height="100"><circle cx="50" cy="50" r="40"/></svg>
+        </div>
+        <div class="answer">
+          <label><input type="radio" name="qm"> Option A</label>
+          <label><input type="radio" name="qm"> Option B</label>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html, { option: 'A', answer: 'Option A', status: 'success' });
+  const { MoodleAdapter } = dom.window;
+
+  await MoodleAdapter.solveCurrentQuestion();
+
+  const analyzeCall = dom.window.sentMessages.find(m => m.action === 'ANALYZE_QUESTION');
+  assert.ok(analyzeCall);
+  assert.ok(analyzeCall.payload.images, 'Should include images array');
+  assert.equal(analyzeCall.payload.images.length, 2, 'Should capture both images');
+  assert.ok(analyzeCall.payload.images[0].includes('IMAGE_ONE_DATA'), 'First image in DOM order');
+  assert.ok(analyzeCall.payload.images[1].includes('data:image/svg+xml;base64,'), 'Second image is serialized SVG in DOM order');
+});
+
+test('Neighboring question isolation: images and options never leak between adjacent questions', async () => {
+  const html = `
+    <div class="que multichoice" id="q_first">
+      <div class="formulation">
+        <div class="qtext">
+          <img src="data:image/png;base64,Q1_SPECIFIC_IMAGE" alt="Q1 Image" />
+        </div>
+        <div class="answer">
+          <label><input type="radio" name="q1"> Q1 Option 1</label>
+          <label><input type="radio" name="q1"> Q1 Option 2</label>
+        </div>
+      </div>
+    </div>
+    <div class="que multichoice" id="q_second">
+      <div class="formulation">
+        <div class="qtext">
+          <img src="data:image/png;base64,Q2_SPECIFIC_IMAGE" alt="Q2 Image" />
+        </div>
+        <div class="answer">
+          <label><input type="radio" name="q2"> Q2 Option 1</label>
+          <label><input type="radio" name="q2"> Q2 Option 2</label>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html, { option: 'A', answer: 'Q1 Option 1', status: 'success' });
+  const { MoodleAdapter } = dom.window;
+
+  // Target Q1 specifically
+  const q1El = dom.window.document.getElementById('q_first');
+  const extractedQ1 = MoodleAdapter.extractQuestionData(q1El);
+
+  assert.equal(extractedQ1.images.length, 1);
+  assert.ok(extractedQ1.images[0].includes('Q1_SPECIFIC_IMAGE'), 'Must only have Q1 image');
+  assert.ok(!extractedQ1.images[0].includes('Q2_SPECIFIC_IMAGE'), 'Must NOT have Q2 image');
+  assert.equal(extractedQ1.options.length, 2);
+  assert.ok(extractedQ1.options.every(o => o.text.includes('Q1')), 'All options must belong to Q1');
+  assert.ok(extractedQ1.options.every(o => !o.text.includes('Q2')), 'No options from Q2 should leak');
+});
+
+test('Inaccessible images trigger clear notification instead of silently failing', async () => {
+  const html = `
+    <div class="que multichoice" id="q_broken">
+      <div class="formulation">
+        <div class="qtext">
+          <img src="https://example.com/inaccessible_broken_diagram.png" />
+        </div>
+        <div class="answer">
+          <label><input type="radio" name="qb"> Option A</label>
+          <label><input type="radio" name="qb"> Option B</label>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { MoodleAdapter } = dom.window;
+
+  await MoodleAdapter.solveCurrentQuestion();
+
+  // Verify error notification rendered
+  const host = dom.window.document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Notification host should be present');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('Could not decode question image'), `Notification should state image decoding error, got: ${box.textContent}`);
+
+  // No ANALYZE_QUESTION should have been dispatched with invalid/missing image
+  const analyzeCall = dom.window.sentMessages.find(m => m.action === 'ANALYZE_QUESTION');
+  assert.ok(!analyzeCall, 'Should NOT dispatch request with broken image');
+});
+
+test('Decorative images, user avatars, and feedback icons are excluded', () => {
+  const html = `
+    <div class="que multichoice" id="q_decor">
+      <div class="info">
+        <img class="userpicture" src="avatar.png" width="35" height="35" />
+        <img class="icon" src="flag.png" width="16" height="16" />
+      </div>
+      <div class="formulation">
+        <div class="qtext">
+          <img role="presentation" src="spacer.gif" width="1" height="1" />
+          <img class="question-diagram" src="data:image/png;base64,REAL_DIAGRAM_DATA" width="300" height="200" alt="State Transition Diagram" />
+        </div>
+        <div class="answer">
+          <label><input type="radio" name="qd"> State S0</label>
+          <label><input type="radio" name="qd"> State S1</label>
+        </div>
+        <div class="feedback">
+          <img class="icon" src="tick.png" width="16" height="16" />
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { MoodleAdapter } = dom.window;
+
+  const qEl = dom.window.document.getElementById('q_decor');
+  const extracted = MoodleAdapter.extractQuestionData(qEl);
+
+  assert.equal(extracted.images.length, 1, 'Should only extract the 1 real diagram');
+  assert.ok(extracted.images[0].includes('REAL_DIAGRAM_DATA'));
 });
