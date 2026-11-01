@@ -64,7 +64,7 @@ router.post('/answer', async (req, res) => {
 
     const payload = validation.data;
     const providerName = payload.provider || process.env.LLM_PROVIDER || 'mock';
-    const modelName = payload.model || (providerName === 'chatgpt' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : (process.env.GEMINI_MODEL || 'gemini-flash-lite-latest'));
+    const modelName = payload.model || (providerName === 'chatgpt' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : (process.env.GEMINI_MODEL || 'gemini-3.5-flash'));
     const cacheKey = computeCacheKey(payload, providerName, modelName);
 
     // 2. Check if identical request is cached
@@ -109,9 +109,22 @@ router.post('/answer', async (req, res) => {
     // Log error internally without exposing credentials or sensitive dumps
     console.error(`[Answer Error] ${error.message}`);
 
+    let cleanMessage = error.message || 'Internal server error';
+    if (cleanMessage.includes('Gemini API error') && cleanMessage.includes('{')) {
+      try {
+        const jsonPart = cleanMessage.substring(cleanMessage.indexOf('{'));
+        const parsed = JSON.parse(jsonPart);
+        if (parsed?.error?.message) {
+          const statusMatch = cleanMessage.match(/\((\d+)\)/);
+          const statusCode = statusMatch ? statusMatch[1] : '400';
+          cleanMessage = `Gemini API error (${statusCode}): ${parsed.error.message}`;
+        }
+      } catch (_) {}
+    }
+
     return res.status(500).json({
       error: 'Failed to process question',
-      message: error.message || 'Internal server error',
+      message: cleanMessage,
       latencyMs
     });
   }

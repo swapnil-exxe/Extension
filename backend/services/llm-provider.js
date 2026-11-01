@@ -261,8 +261,7 @@ async function callGemini(payload, config = {}) {
     generationConfig: {
       temperature: 0.1,
       maxOutputTokens: 1024,
-      responseMimeType: 'application/json',
-      thinkingConfig: { thinkingBudget: 0 }
+      responseMimeType: 'application/json'
     }
   };
 
@@ -340,13 +339,15 @@ async function callGemini(payload, config = {}) {
       } catch (err) {
         lastError = err;
         if (
+          err.message.includes('400') ||
+          err.message.includes('INVALID_ARGUMENT') ||
           err.message.includes('404') ||
           err.message.includes('NOT_FOUND') ||
           err.message.includes('503') ||
           err.message.includes('UNAVAILABLE') ||
           err.message.includes('high demand')
         ) {
-          console.warn(`[LLM Provider] Gemini model ${model} unavailable (${err.message.slice(0, 80)}...). Trying next model...`);
+          console.warn(`[LLM Provider] Gemini model ${model} failed (${err.message.slice(0, 80)}...). Trying next model...`);
           continue;
         }
         if (err.message.includes('429') && orderedKeys.length > 1) {

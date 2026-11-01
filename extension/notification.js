@@ -289,6 +289,26 @@
       this.box.textContent = msg || 'Analyzing...';
     }
 
+    formatErrorMessage(raw) {
+      if (!raw || typeof raw !== 'string') return 'Could not solve question';
+      let text = raw.trim();
+      if (text.includes('{') && text.includes('}')) {
+        try {
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed?.error?.message) {
+              return `Error: ${parsed.error.message}`;
+            }
+            if (parsed?.message) {
+              return `Error: ${parsed.message}`;
+            }
+          }
+        } catch (_) {}
+      }
+      return text;
+    }
+
     /**
      * Show error notification
      */
@@ -297,7 +317,7 @@
       this.clearTimer();
 
       this.box.className = 'quick-notify-box visible error';
-      this.box.textContent = msg || 'Could not detect question';
+      this.box.textContent = this.formatErrorMessage(msg);
 
       this.timerId = setTimeout(() => {
         this.hide();
