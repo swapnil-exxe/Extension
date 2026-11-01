@@ -131,27 +131,39 @@ export function extractAndParseJSON(rawText) {
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    // 1. Try closing open quote and brace
+    // 1. Try cleaning control characters and common unescaped newlines/tabs
     try {
-      let repaired = text;
-      if (!repaired.endsWith('}')) {
-        if (!repaired.endsWith('"')) repaired += '"';
-        repaired += '}';
-      }
-      parsed = JSON.parse(repaired);
-    } catch (e2) {
-      // 2. Regex fallback for answer and option
-      const optMatch = text.match(/"option"\s*:\s*"([^"]+)"/i) || text.match(/option\s*:\s*([A-Za-z0-9_\-]+)/i);
-      const ansMatch = text.match(/"answer"\s*:\s*"([^"]+)"/i) || text.match(/answer\s*:\s*([^\n\r\}]+)/i);
-      if (ansMatch) {
-        parsed = {
-          answer: ansMatch[1].replace(/[",]/g, '').trim(),
-          option: optMatch ? optMatch[1].replace(/[",]/g, '').trim() : 'A',
-          status: 'success',
-          optionIds: []
-        };
-      } else {
-        throw new Error(`Failed to parse LLM JSON: ${err.message}`);
+      const sanitized = text
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r');
+      parsed = JSON.parse(sanitized);
+    } catch (e1) {
+      // 2. Try closing open quote and brace
+      try {
+        let repaired = text;
+        if (!repaired.endsWith('}')) {
+          if (!repaired.endsWith('"')) repaired += '"';
+          repaired += '}';
+        }
+        parsed = JSON.parse(repaired);
+      } catch (e2) {
+        // 3. Ultra-resilient regex fallback: extract option and answer even if rest of JSON (e.g. reason) is malformed
+        const optMatch = text.match(/"option"\s*:\s*"([^"]+)"/i) || text.match(/option\s*:\s*([A-Za-z0-9_\-]+)/i) || text.match(/\b([A-Da-d])\b/);
+        const ansMatch = text.match(/"answer"\s*:\s*"([^"]+)"/i) || text.match(/"answer"\s*:\s*([^\n\r,\}]+)/i) || text.match(/answer\s*:\s*"?([^\n\r,\"}]+)/i);
+        const reasonMatch = text.match(/"reason"\s*:\s*"([^"]+)"/i);
+
+        if (optMatch || ansMatch) {
+          parsed = {
+            option: optMatch ? optMatch[1].replace(/[",]/g, '').trim() : '',
+            answer: ansMatch ? ansMatch[1].replace(/[",]/g, '').trim() : '',
+            reason: reasonMatch ? reasonMatch[1].trim() : '',
+            status: 'success',
+            optionIds: []
+          };
+        } else {
+          throw new Error(`Failed to parse LLM JSON: ${err.message}`);
+        }
       }
     }
   }

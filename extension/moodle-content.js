@@ -267,20 +267,22 @@
    */
   function isValidQuestionContainer(el) {
     if (!el || el.children.length === 0) return false;
-    if (el.matches('header, nav, footer, [class*="chip" i], [class*="tag" i], [class*="badge" i], [class*="sidebar" i]')) return false;
+    if (el.matches('header, nav, footer, li, ul, ol, [class*="chip" i], [class*="tag" i], [class*="badge" i], [class*="sidebar" i]')) return false;
     if (el.closest('header, nav, footer, [class*="chip" i], [class*="tag" i]')) return false;
+    if (el.matches('[class*="optionItem" i], [class*="option-item" i], [class*="optionsList" i], [class*="options-list" i], [class*="optionLabel" i], [class*="optionInput" i], [class*="optionContainer" i]')) return false;
+    if (el.matches('[class*="questionText" i], [class*="qtext" i], [class*="prompt" i], [class*="header" i], [class*="footer" i]')) return false;
 
     // Must have radio/checkbox inputs or option items
     const inputs = el.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
     if (inputs.length >= 2) return true;
 
-    const optionEls = el.querySelectorAll('[class*="optionContainer" i], [class*="option-item" i], [class*="choice" i], [class*="answer" i], li');
+    const optionEls = el.querySelectorAll('[class*="optionContainer" i], [class*="option-item" i], [class*="optionItem" i], [class*="choice" i], [class*="answer" i], li');
     const textOptions = Array.from(optionEls).filter(o => o.textContent.trim().length > 0 && o.textContent.trim().length < 300);
     if (textOptions.length >= 2) return true;
 
     // Has question prompt and option text
     const text = el.textContent.trim();
-    if (text.length >= 20 && (/^(?:(?:\([A-Da-d]\))|[A-Da-d][\.\:\)])/m.test(text) || text.includes('?'))) {
+    if (text.length >= 20 && (/^(?:(?:\([A-Da-d]\))|[A-Da-d][\.\:\)])/m.test(text))) {
       return true;
     }
 
@@ -301,6 +303,7 @@
       '[data-question-id], .question-container, .formulation, fieldset, .quiz-card, ' +
       '[class*="questionsAndOptions" i], [class*="quizQuestion" i], [class*="quizComponent" i], ' +
       '[class*="quiz-question" i], [class*="question-card" i], [class*="question_holder" i], ' +
+      '[class*="quizCard" i], [class*="QuizQuestionCard" i], [class*="questionCard" i], ' +
       '[class*="bix-div-container" i]'
     )).filter(isValidQuestionContainer);
 
@@ -714,7 +717,9 @@
 
     // 1. Question Text
     let questionText = '';
-    const qtextElem = questionEl.querySelector('.qtext') ||
+    const qtextElem = questionEl.querySelector('[class*="quizQuestionTextContainer" i] [class*="question" i]') ||
+                      questionEl.querySelector('[class*="quizQuestionTextContainer" i]') ||
+                      questionEl.querySelector('.qtext') ||
                       questionEl.querySelector('.formulation .qtext') ||
                       questionEl.querySelector('.formulation') ||
                       questionEl.querySelector('.q-title, h1, h2, h3, h4, h5, h6, legend, [class*="question-text" i], [class*="prompt" i], p');
@@ -778,15 +783,16 @@
 
     // If no standard inputs found, detect custom option items / labels / list items
     if (inputs.length === 0) {
-      const candidates = Array.from(questionEl.querySelectorAll('label, [class*="optionContainer" i], [class*="option" i], [class*="choice" i], [class*="answer" i], [class*="item" i], li')).filter(el => {
-        if (el.matches('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i]')) return false;
-        if (el.closest('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i]')) return false;
+      const candidates = Array.from(questionEl.querySelectorAll('label, [class*="optionItem" i], [class*="option-item" i], [class*="optionContainer" i], [class*="option" i], [class*="choice" i], [class*="answer" i], li')).filter(el => {
+        if (el.matches('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i], [class*="header" i], ul, ol')) return false;
+        if (el.closest('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i], [class*="header" i]')) return false;
         const text = el.textContent.trim();
         return text.length > 0 && text.length < 250;
       });
-      const filtered = candidates.filter(item => !candidates.some(other => other !== item && item.contains(other)));
-      if (filtered.length >= 2) {
-        inputs = filtered;
+      // Retain outermost items only (e.g. the li or optionItem wrapper, avoiding splitting innerCircle and label into separate options)
+      const outermost = candidates.filter(item => !candidates.some(other => other !== item && other.contains(item)));
+      if (outermost.length >= 2) {
+        inputs = outermost;
       }
     }
 
@@ -794,7 +800,15 @@
       let text = '';
 
       if (input.tagName !== 'INPUT') {
-        text = extractFormattedText(input);
+        const circle = input.querySelector('[class*="innerCircle" i], [class*="optionInput" i]');
+        const label = input.querySelector('[class*="optionLabel" i]');
+        if (label) {
+          const labelText = extractFormattedText(label);
+          const letter = circle ? circle.textContent.trim() : String.fromCharCode(65 + idx);
+          text = `${letter}. ${labelText}`;
+        } else {
+          text = extractFormattedText(input);
+        }
       } else {
         if (input.id) {
           const label = questionEl.querySelector(`label[for="${CSS.escape(input.id)}"]`) ||
