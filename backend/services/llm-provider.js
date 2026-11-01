@@ -213,7 +213,21 @@ function buildUserPrompt({ questionType, question, options, hasImage }) {
 }
 
 let geminiKeyIndex = 0;
-const exhaustedGeminiKeys = new Set();
+const exhaustedGeminiKeys = new Map();
+
+function isKeyExhausted(key) {
+  if (!key || !exhaustedGeminiKeys.has(key)) return false;
+  const expiry = exhaustedGeminiKeys.get(key);
+  if (Date.now() > expiry) {
+    exhaustedGeminiKeys.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function markKeyExhausted(key, durationMs = 60000) {
+  if (key) exhaustedGeminiKeys.set(key, Date.now() + durationMs);
+}
 
 /**
  * Returns the pool of configured Gemini API keys (supports multiple keys for rotation & failover)
@@ -247,11 +261,13 @@ async function callGemini(payload, config = {}) {
   }
 
   const candidateModels = Array.from(new Set([
-    'gemini-3.5-flash',
-    'gemini-3.6-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-3.1-flash-lite-preview',
+    'gemini-flash-lite-latest',
     config.model,
     process.env.GEMINI_MODEL,
-    'gemini-3.5-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-3.6-flash',
     'gemini-flash-latest'
   ].filter(Boolean)));
 
@@ -301,7 +317,7 @@ async function callGemini(payload, config = {}) {
   };
 
   // Prioritize non-exhausted keys in the pool
-  const availableKeys = keyPool.filter(k => !exhaustedGeminiKeys.has(k));
+  const availableKeys = keyPool.filter(k => !isKeyExhausted(k));
   const candidateKeys = availableKeys.length > 0 ? availableKeys : keyPool;
 
   // If a specific key was requested by the user, prioritize it first; otherwise round-robin
@@ -342,13 +358,8 @@ async function callGemini(payload, config = {}) {
 
         if (!response.ok) {
           const errorBody = await response.text();
-          // If this key hit 429 quota/rate limit, remember it and switch to next key in pool
           if (response.status === 429) {
-            if (currentKey) exhaustedGeminiKeys.add(currentKey);
-            if (orderedKeys.length > 1) {
-              console.warn(`[Gemini Pool] Key hit 429 rate limit/quota, switching to next key in pool...`);
-              break;
-            }
+            markKeyExhausted(currentKey, 60000);
           }
           throw new Error(`Gemini API error (${response.status}): ${errorBody}`);
         }
@@ -381,22 +392,20 @@ async function callGemini(payload, config = {}) {
           err.message.includes('INVALID_ARGUMENT') ||
           err.message.includes('404') ||
           err.message.includes('NOT_FOUND') ||
+          err.message.includes('429') ||
           err.message.includes('503') ||
           err.message.includes('UNAVAILABLE') ||
           err.message.includes('high demand')
         ) {
-          console.warn(`[LLM Provider] Gemini model ${model} failed (${err.message.slice(0, 80)}...). Trying next model...`);
+          console.warn(`[LLM Provider] Gemini model ${model} failed (${err.message.slice(0, 80)}...). Trying next model/key...`);
           continue;
-        }
-        if (err.message.includes('429') && orderedKeys.length > 1) {
-          break; // Switch to next key in pool
         }
         throw err;
       }
     }
   }
 
-  throw lastError || new Error('All Gemini candidate models and keys failed');
+  throw lastError || new Error('All Gemini candidate models and keys failed. Please wait a moment or try again.');
 }
 
 /**
