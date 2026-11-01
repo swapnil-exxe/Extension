@@ -203,7 +203,13 @@
       if (status === 'uncertain' || String(option).toUpperCase() === 'UNCERTAIN' || String(answer).toUpperCase().startsWith('UNCERTAIN')) {
         text = 'UNCERTAIN — Question needs verification';
       } else if (option && option.trim() && answer && answer.trim()) {
-        text = `${option.trim()} — ${answer.trim()}`;
+        const optLetter = option.trim();
+        let cleanAnswer = answer.trim();
+        const prefixRegex = new RegExp(`^${optLetter}[\\.\\:\\)\\-]\\s*`, 'i');
+        if (prefixRegex.test(cleanAnswer)) {
+          cleanAnswer = cleanAnswer.replace(prefixRegex, '').trim();
+        }
+        text = `${optLetter} — ${cleanAnswer}`;
       } else if (answer && answer.trim()) {
         text = answer.trim();
       } else if (option && option.trim()) {
