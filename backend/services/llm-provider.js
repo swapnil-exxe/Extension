@@ -169,6 +169,13 @@ export function extractAndParseJSON(rawText) {
   }
 
   // Normalize option and status fields
+  if (Array.isArray(parsed.optionIds) && parsed.optionIds.length === 1) {
+    const singleId = String(parsed.optionIds[0]).trim().toUpperCase();
+    if (/^[A-Z]$/.test(singleId)) {
+      parsed.option = singleId;
+    }
+  }
+
   if (!parsed.option && parsed.answer) {
     const letterMatch = parsed.answer.match(/^([A-Za-z])[\.\:\)\-]\s*(.*)$/);
     if (letterMatch) {
