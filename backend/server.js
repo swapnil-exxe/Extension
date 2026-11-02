@@ -18,7 +18,8 @@ import { getActiveProviderInfo } from './services/llm-provider.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '127.0.0.1';
+const isCloud = Boolean(process.env.RENDER || process.env.PORT || process.env.NODE_ENV === 'production');
+const HOST = process.env.HOST || (isCloud ? '0.0.0.0' : '127.0.0.1');
 
 // 1. Security Headers with Helmet
 app.use(helmet({
