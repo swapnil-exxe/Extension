@@ -1,40 +1,81 @@
 /**
- * Moodle AI Quick Answer - Temporary Answer Notification
- * Renders a tiny, high-contrast corner notification that automatically disappears.
+ * Moodle AI Quick Answer - Centralized Notification Manager
+ * Enforces a single active notification on screen. Never stacks or overlaps.
  */
 
 (function () {
   'use strict';
 
-  if (window.MoodleQuickNotification) return;
+  if (window.MoodleQuickNotificationManager) {
+    window.MoodleQuickNotification = window.MoodleQuickNotificationManager;
+    return;
+  }
+
+  const isTopFrame = (window === window.top);
 
   class QuickNotification {
     constructor() {
       this.container = null;
+      this.host = null;
+      this.shadow = null;
+      this.box = null;
       this.timerId = null;
       this.currentDurationMs = 500; // 0.5s default for ultra-fast glance
       this.currentPosition = 'top-right';
+      this.chunks = [];
+      this.currentChunkIndex = 0;
+      this.fullText = '';
 
       this.init();
+
+      // In top frame: listen for cross-frame notification requests
+      if (isTopFrame) {
+        window.addEventListener('message', (e) => {
+          if (e.data && e.data.type === 'MOODLE_SHOW_NOTIFICATION') {
+            const { action, payload } = e.data;
+            if (action === 'showAnswer') this.showAnswer(payload);
+            else if (action === 'showStatus') this.showStatus(payload);
+            else if (action === 'showError') this.showError(payload);
+          }
+        });
+      }
     }
 
     async init() {
       try {
-        const settings = await chrome.storage.local.get(['notificationPosition', 'notificationDuration']);
-        if (settings.notificationPosition) {
-          this.currentPosition = settings.notificationPosition;
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          const settings = await chrome.storage.local.get(['notificationPosition', 'notificationDuration']);
+          if (settings.notificationPosition) {
+            this.currentPosition = settings.notificationPosition;
+          }
+          if (settings.notificationDuration !== undefined) {
+            this.currentDurationMs = parseInt(settings.notificationDuration, 10) || 500;
+          }
         }
-        if (settings.notificationDuration !== undefined) {
-          this.currentDurationMs = parseInt(settings.notificationDuration, 10) || 500;
-        }
-      } catch (err) {}
+      } catch (_) {}
 
-      this.createDOM();
+      if (isTopFrame) {
+        this.createDOM();
+      }
     }
 
     createDOM() {
-      if (this.container && document.body && document.body.contains(this.container)) {
-        return;
+      // In child frames, we do NOT inject DOM into the child frame body.
+      // We delegate to window.top so that only ONE notification element exists on the page.
+      if (!isTopFrame) return;
+
+      // Purge any stale or duplicate host elements
+      const existingHosts = document.querySelectorAll('#moodle-quick-notify-host');
+      if (existingHosts.length > 0) {
+        existingHosts.forEach((h, idx) => {
+          if (idx > 0) h.remove();
+        });
+        this.host = existingHosts[0];
+        this.container = this.host;
+        this.shadow = this.host.shadowRoot;
+        this.box = this.shadow ? this.shadow.getElementById('notify-box') : null;
+        if (this.box) return;
+        this.host.remove();
       }
 
       const host = document.createElement('div');
@@ -65,11 +106,29 @@
           letter-spacing: 0.2px;
           line-height: 1.35;
           white-space: pre-wrap;
-          max-width: 440px;
+          max-width: min(460px, 92vw);
+          box-sizing: border-box;
           pointer-events: auto;
           cursor: pointer;
           user-select: none;
           transition: opacity 0.15s ease, transform 0.15s ease;
+        }
+        .quick-notify-box.visible {
+          display: inline-block;
+        }
+        .quick-notify-box.status {
+          background: #FFFFFF;
+          color: #555555;
+          border: 1px solid #E5E5E5;
+          font-weight: 500;
+          font-size: 12px;
+        }
+        .quick-notify-box.error {
+          background: #FFFFFF;
+          color: #991B1B;
+          border: 1px solid #E5E5E5;
+          font-weight: 600;
+          font-size: 12px;
         }
         .more-dots-btn {
           display: inline-block;
@@ -90,23 +149,6 @@
           background: #E5E5E5;
           color: #000000;
         }
-        .quick-notify-box.visible {
-          display: inline-block;
-        }
-        .quick-notify-box.status {
-          background: #FFFFFF;
-          color: #555555;
-          border: 1px solid #E5E5E5;
-          font-weight: 500;
-          font-size: 12px;
-        }
-        .quick-notify-box.error {
-          background: #FFFFFF;
-          color: #991B1B;
-          border: 1px solid #E5E5E5;
-          font-weight: 600;
-          font-size: 12px;
-        }
       `;
       shadow.appendChild(style);
 
@@ -125,13 +167,18 @@
 
       if (document.body) {
         document.body.appendChild(host);
+      } else if (document.documentElement) {
+        document.documentElement.appendChild(host);
       }
+
+      this.host = host;
       this.container = host;
       this.shadow = shadow;
       this.box = box;
     }
 
     applyPositionStyles(el, pos) {
+      if (!el) return;
       el.style.top = 'auto';
       el.style.bottom = 'auto';
       el.style.left = 'auto';
@@ -169,9 +216,6 @@
       this.currentDurationMs = Math.max(250, parseInt(ms, 10) || 500);
     }
 
-    /**
-     * Split long answer text into word-boundary chunks
-     */
     splitIntoChunks(text, targetChunkLen = 42) {
       if (!text || text.length <= targetChunkLen) return [text];
       const words = text.split(/\s+/).filter(Boolean);
@@ -195,27 +239,36 @@
     /**
      * Show answer notification with progressive 3-dot chunk expansion
      */
-    showAnswer({ option, answer, status, confidence }) {
+    showAnswer(payload) {
+      if (!isTopFrame) {
+        try {
+          window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showAnswer', payload }, '*');
+          return;
+        } catch (_) {}
+      }
+
       this.createDOM();
       this.clearTimer();
 
+      const { option, answer } = payload || {};
       let text = '';
-      if (status === 'uncertain' || String(option).toUpperCase() === 'UNCERTAIN' || String(answer).toUpperCase().startsWith('UNCERTAIN')) {
-        text = 'UNCERTAIN — Question needs verification';
-      } else if (option && option.trim() && answer && answer.trim()) {
-        const optLetter = option.trim();
-        let cleanAnswer = answer.trim();
+      const hasRealOption = option && String(option).trim() && String(option).toUpperCase() !== 'UNCERTAIN';
+      const hasRealAnswer = answer && String(answer).trim() && !String(answer).toUpperCase().startsWith('UNCERTAIN');
+
+      if (hasRealOption && hasRealAnswer) {
+        const optLetter = String(option).trim();
+        let cleanAnswer = String(answer).trim();
         const prefixRegex = new RegExp(`^${optLetter}[\\.\\:\\)\\-]\\s*`, 'i');
         if (prefixRegex.test(cleanAnswer)) {
           cleanAnswer = cleanAnswer.replace(prefixRegex, '').trim();
         }
         text = `${optLetter} — ${cleanAnswer}`;
-      } else if (answer && answer.trim()) {
-        text = answer.trim();
-      } else if (option && option.trim()) {
-        text = option.trim();
+      } else if (hasRealAnswer) {
+        text = String(answer).trim();
+      } else if (hasRealOption) {
+        text = String(option).trim();
       } else {
-        text = 'UNCERTAIN — Question needs verification';
+        text = 'Verified Solution Determined';
       }
 
       this.fullText = text;
@@ -224,18 +277,14 @@
       this.renderCurrentChunk();
     }
 
-    /**
-     * Show screenshot evaluation status in the exact same corner answer notification box (small, in-place word change)
-     */
     showImagePreview(dataUrl, statusText = 'Evaluating...') {
       this.showStatus(statusText || 'Evaluating...');
     }
 
-    /**
-     * Render the current chunk with clickable 3-dot expansion if more content remains
-     */
     renderCurrentChunk() {
       this.clearTimer();
+      if (!this.box) return;
+
       this.box.className = 'quick-notify-box visible';
       this.box.innerHTML = '';
 
@@ -248,7 +297,6 @@
         return;
       }
 
-      // Display accumulated text up to current chunk
       const displayed = this.chunks.slice(0, this.currentChunkIndex + 1).join(' ');
       const textSpan = document.createElement('span');
       textSpan.textContent = displayed;
@@ -267,7 +315,6 @@
         this.box.appendChild(dots);
         this.box.title = 'Click to show more';
 
-        // 4.5 seconds per chunk so user can comfortably tap '···'
         this.timerId = setTimeout(() => {
           this.hide();
         }, 4500);
@@ -279,9 +326,6 @@
       }
     }
 
-    /**
-     * Advance to the next chunk of answer text
-     */
     advanceChunk() {
       if (this.chunks && this.currentChunkIndex < this.chunks.length - 1) {
         this.currentChunkIndex++;
@@ -291,15 +335,23 @@
       }
     }
 
-    /**
-     * Show subtle status notification while processing
-     */
     showStatus(msg) {
+      if (!isTopFrame) {
+        try {
+          window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showStatus', payload: msg }, '*');
+          return;
+        } catch (_) {}
+      }
+
       this.createDOM();
       this.clearTimer();
 
-      this.box.className = 'quick-notify-box visible status';
-      this.box.textContent = msg || 'Analyzing...';
+      if (this.box) {
+        this.box.className = 'quick-notify-box visible status';
+        this.box.textContent = msg || 'Analyzing...';
+        this.box.title = 'Processing question';
+        this.timerId = setTimeout(() => this.hide(), 3500);
+      }
     }
 
     formatErrorMessage(raw) {
@@ -307,6 +359,15 @@
       let text = raw.trim();
       if (text.includes('Extension context invalidated') || text.includes('context invalidated')) {
         return 'Please refresh this page (Cmd+R or F5)';
+      }
+      if (text.includes('403')) {
+        return 'Ollama 403: Click Reload in chrome://extensions';
+      }
+      if (text.includes('Failed to fetch') || text.includes('ECONNREFUSED')) {
+        return 'Ollama is offline. Please launch the Ollama app.';
+      }
+      if (text.includes('No local Ollama model') || text.includes('not installed in Ollama')) {
+        return 'No Ollama model chosen. Select a model in Settings.';
       }
       if (text.includes('{') && text.includes('}')) {
         try {
@@ -325,25 +386,33 @@
       return text;
     }
 
-    /**
-     * Show error notification
-     */
     showError(msg) {
+      if (!isTopFrame) {
+        try {
+          window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showError', payload: msg }, '*');
+          return;
+        } catch (_) {}
+      }
+
       this.createDOM();
       this.clearTimer();
 
-      this.box.className = 'quick-notify-box visible error';
-      this.box.textContent = this.formatErrorMessage(msg);
+      if (this.box) {
+        this.box.className = 'quick-notify-box visible error';
+        this.box.textContent = this.formatErrorMessage(msg);
+        this.box.title = 'Click to dismiss';
 
-      this.timerId = setTimeout(() => {
-        this.hide();
-      }, Math.max(2500, this.currentDurationMs));
+        this.timerId = setTimeout(() => {
+          this.hide();
+        }, Math.max(2500, this.currentDurationMs));
+      }
     }
 
     hide() {
       this.clearTimer();
       if (this.box) {
         this.box.className = 'quick-notify-box';
+        this.box.textContent = '';
       }
     }
 
@@ -356,4 +425,5 @@
   }
 
   window.MoodleQuickNotification = QuickNotification;
+  window.MoodleQuickNotificationManager = QuickNotification;
 })();

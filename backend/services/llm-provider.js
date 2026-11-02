@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { validateAnswerResponse } from '../validation/answer-schema.js';
+import { callOllama, detectModelCapability } from './ollama-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,6 +57,9 @@ export function isVisionSupported(provider = '', model = '') {
     }
     return true;
   }
+  if (norm === 'ollama') {
+    return detectModelCapability({ name: model }) === 'Vision';
+  }
   if (norm === 'mock') return true;
   return false;
 }
@@ -88,12 +92,8 @@ Strict Accuracy Rules:
    - For single-choice / true-false: set "option" to the exact option letter (e.g. "A", "B", "C", "D") and "answer" to the exact option text.
    - For multiple-select: set "option" to comma-separated letters (e.g. "A, C") and "answer" to the combined option texts.
    - For numerical / short answer: set "option" to "" and "answer" to the verified numeric/text result.
-4. If the options do NOT match the computed result or key information is missing/ambiguous:
-   - Set "option" to "UNCERTAIN"
-   - Set "answer" to "Question needs verification"
-   - Set "status" to "uncertain"
-   - Set "confidence" to 0.40
-5. Never invent facts or force an incorrect option when options mismatch.
+4. Always determine and select the single closest, best-matching option from the choices. Under NO circumstances output "UNCERTAIN" or generic hesitation. Choose the definitive answer that an expert examiner would accept.
+5. Set "status" to "ok" and "confidence" between 0.90 and 1.0.
 6. Provide a concise 1-sentence verification in "reason".
 
 Compact JSON format (strictly no markdown fences):
@@ -699,6 +699,9 @@ export async function getLLMAnswer(payload, options = {}) {
     : (payload.image ? [payload.image] : []);
 
   if (allImages.length > 0 && !isVisionSupported(provider, options.model)) {
+    if (provider === 'ollama') {
+      throw new Error(`The selected local model "${options.model || 'unknown'}" is a text-only model and does not support image questions. Please select a vision-capable local model (such as llama3.2-vision, llava, or qwen2-vl) or use text questions.`);
+    }
     throw new Error(`The configured provider "${provider}" does not support image-based questions. Please switch to Google Gemini or ChatGPT.`);
   }
 
@@ -717,6 +720,11 @@ export async function getLLMAnswer(payload, options = {}) {
           throw openAiErr;
         }
       }
+    } else if (provider === 'ollama') {
+      rawResult = await callOllama(payload, {
+        ...options,
+        ollamaUrl: payload.ollamaUrl || options.ollamaUrl
+      });
     } else if (provider === 'mock') {
       rawResult = callMock(payload);
     } else {

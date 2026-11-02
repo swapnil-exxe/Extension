@@ -263,8 +263,48 @@ document.addEventListener('DOMContentLoaded', async () => {
     gemini_4: 'Gemini (Key 4)',
     gemini: 'Gemini',
     chatgpt: 'ChatGPT',
-    openai: 'ChatGPT'
+    openai: 'ChatGPT',
+    ollama: 'Ollama Local'
   };
+
+  // Update Ollama tag and status
+  const tagOllamaModel = document.getElementById('tag-ollama-model');
+  const badgeOllama = document.getElementById('badge-ollama');
+  const statusOllama = document.getElementById('status-ollama');
+
+  async function updateOllamaPopupInfo() {
+    const st = await chrome.storage.local.get(['ollamaSelectedModel', 'localBackendUrl', 'ollamaUrl']);
+    if (tagOllamaModel) {
+      tagOllamaModel.textContent = st.ollamaSelectedModel || 'Select in Settings ⚙';
+    }
+    chrome.runtime.sendMessage({
+      action: 'OLLAMA_GET_STATUS',
+      localBackendUrl: st.localBackendUrl || 'http://127.0.0.1:3000',
+      ollamaUrl: st.ollamaUrl || 'http://127.0.0.1:11434'
+    }, (res) => {
+      if (res && res.ok) {
+        if (badgeOllama) badgeOllama.className = 'status-badge connected';
+        if (statusOllama) statusOllama.textContent = 'Connected';
+        // Auto-select first available model if user hasn't chosen one yet
+        if (!st.ollamaSelectedModel) {
+          chrome.runtime.sendMessage({ action: 'OLLAMA_GET_MODELS' }, (mRes) => {
+            if (mRes && mRes.ok && Array.isArray(mRes.models) && mRes.models.length > 0) {
+              const best = mRes.models.find(m => m.capability === 'Vision') ||
+                           mRes.models.find(m => m.capability !== 'Embedding') ||
+                           mRes.models[0];
+              const autoModel = best.name;
+              chrome.storage.local.set({ ollamaSelectedModel: autoModel });
+              if (tagOllamaModel) tagOllamaModel.textContent = autoModel;
+            }
+          });
+        }
+      } else {
+        if (badgeOllama) badgeOllama.className = 'status-badge';
+        if (statusOllama) statusOllama.textContent = 'Offline';
+      }
+    });
+  }
+  updateOllamaPopupInfo();
 
   let lastReportedLatency = 80;
 
@@ -295,13 +335,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       await chrome.storage.local.set({ activeProvider: selected });
       highlightActiveProvider(selected);
 
-      // Notify backend server of the switch
-      const backendProvider = selected.startsWith('gemini') ? 'gemini' : selected;
-      chrome.runtime.sendMessage({
-        action: 'AUTH_SELECT_PROVIDER',
-        provider: backendProvider,
-        backendUrl: effectiveBackendUrl
-      });
+      // Notify backend server of the switch only if not offline Ollama
+      if (selected !== 'ollama') {
+        const backendProvider = selected.startsWith('gemini') ? 'gemini' : selected;
+        chrome.runtime.sendMessage({
+          action: 'AUTH_SELECT_PROVIDER',
+          provider: backendProvider,
+          backendUrl: effectiveBackendUrl
+        });
+      }
     }
   });
 

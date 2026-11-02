@@ -34,6 +34,7 @@ export const AnswerRequestSchema = z.object({
   provider: z.string().optional(),
   model: z.string().optional(),
   apiKey: z.string().optional(),
+  ollamaUrl: z.string().optional(),
   extractionDurationMs: z.number().optional()
 }).refine(data => (data.question && data.question.trim().length > 0) || (data.image && data.image.length > 0) || (data.images && data.images.length > 0), {
   message: 'Either question text or image must be provided'

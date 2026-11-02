@@ -13,11 +13,12 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import answerRouter from './routes/answer.js';
 import authRouter from './routes/auth.js';
+import ollamaRouter from './routes/ollama.js';
 import { getActiveProviderInfo } from './services/llm-provider.js';
 
-
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 
 // 1. Security Headers with Helmet
 app.use(helmet({
@@ -88,6 +89,7 @@ app.get('/api/health', (req, res) => {
 
 // 6. API Routes
 app.use('/api', answerRouter);
+app.use('/api', ollamaRouter);
 app.use('/api/auth', authRouter);
 
 // 7. Global 404 Handler
@@ -104,21 +106,44 @@ app.use((err, req, res, next) => {
 // Start listening if executed directly and not in test environment
 const isDirectExecution = process.argv[1] && (process.argv[1].endsWith('server.js') || process.argv[1].endsWith('server'));
 if (process.env.NODE_ENV !== 'test' && isDirectExecution) {
-  const server = app.listen(PORT, () => {
-    console.log(`===============================================`);
-    console.log(`🚀 Moodle AI Assistant Backend running on port ${PORT}`);
-    console.log(`👉 Health check: http://localhost:${PORT}/health`);
-    console.log(`👉 Answer API:  http://localhost:${PORT}/api/answer`);
-    console.log(`👉 LLM Provider: ${process.env.LLM_PROVIDER || 'mock (default)'}`);
-    console.log(`===============================================`);
-  });
+  let activeServer = null;
+
+  const startServer = (portToUse) => {
+    const srv = app.listen(portToUse, HOST, () => {
+      console.log(`===============================================`);
+      console.log(`🚀 Moodle AI Assistant Backend running on http://${HOST}:${portToUse}`);
+      console.log(`👉 Health check: http://${HOST}:${portToUse}/health`);
+      console.log(`👉 Answer API:   http://${HOST}:${portToUse}/api/answer`);
+      console.log(`👉 Ollama Solve: http://${HOST}:${portToUse}/api/solve`);
+      console.log(`👉 Ollama Models:http://${HOST}:${portToUse}/api/ollama/models`);
+      console.log(`👉 LLM Provider: ${process.env.LLM_PROVIDER || 'mock (default)'}`);
+      console.log(`===============================================`);
+    });
+
+    srv.on('error', (err) => {
+      if (err.code === 'EADDRINUSE' && portToUse === 3000) {
+        console.warn(`⚠️ Port 3000 is busy, automatically falling back to port 3001...`);
+        startServer(3001);
+      } else {
+        console.error('[Server Error]', err.message);
+      }
+    });
+
+    activeServer = srv;
+  };
+
+  startServer(Number(PORT));
 
   const shutdown = () => {
     console.log('\nShutting down backend server...');
-    server.close(() => {
-      console.log('Server stopped.');
+    if (activeServer) {
+      activeServer.close(() => {
+        console.log('Server stopped.');
+        process.exit(0);
+      });
+    } else {
       process.exit(0);
-    });
+    }
   };
 
   process.on('SIGTERM', shutdown);

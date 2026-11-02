@@ -84,7 +84,8 @@ router.post('/answer', async (req, res) => {
     const llmResult = await getLLMAnswer(payload, {
       apiKey: payload.apiKey,
       provider: providerName,
-      model: modelName
+      model: modelName,
+      ollamaUrl: payload.ollamaUrl
     });
     const latencyMs = Date.now() - startTime;
 

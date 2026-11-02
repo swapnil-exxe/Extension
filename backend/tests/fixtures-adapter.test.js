@@ -715,3 +715,56 @@ test('Vision support verification: isVisionSupported confirms image capability',
   assert.equal(isVisionSupported('chatgpt', 'gpt-3.5-turbo'), false, 'GPT-3.5 does NOT support vision');
   assert.equal(isVisionSupported('custom', 'mistral-7b'), false, 'Generic custom model does not claim vision support');
 });
+
+test('Notification Manager: Strictly 1 host and 1 box in DOM, replaces in-place without overlapping', () => {
+  const dom = setupDOM('<div></div>');
+  const { document, MoodleQuickNotification } = dom.window;
+
+  const notifier = new MoodleQuickNotification();
+  notifier.showAnswer({ option: 'B', answer: 'Software Requirements Specification' });
+
+  let hosts = document.querySelectorAll('#moodle-quick-notify-host');
+  assert.equal(hosts.length, 1, 'Only 1 host element can exist');
+  let box = hosts[0].shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('B — Software Requirements Specification'));
+
+  // Immediate subsequent notification (e.g. error or status) replaces content in-place
+  notifier.showError('Ollama is offline. Please launch the Ollama app.');
+
+  hosts = document.querySelectorAll('#moodle-quick-notify-host');
+  assert.equal(hosts.length, 1, 'Still strictly 1 host element (never stacks)');
+  box = hosts[0].shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('Ollama is offline'), 'Replaced content in-place');
+  assert.ok(!box.textContent.includes('Software Requirements'), 'Previous content is removed');
+});
+
+test('Notification Manager: Child frame does NOT inject DOM and delegates to window.top', () => {
+  const dom = new JSDOM('<!DOCTYPE html><html><body><iframe id="test-frame"></iframe></body></html>', {
+    runScripts: 'dangerously',
+    url: 'http://localhost/'
+  });
+
+  const iframe = dom.window.document.getElementById('test-frame');
+  const childWin = iframe.contentWindow;
+
+  let sentData = null;
+  childWin.top.postMessage = (data) => {
+    sentData = data;
+  };
+
+  childWin.chrome = {
+    storage: { local: { get: () => Promise.resolve({}), set: () => Promise.resolve() } }
+  };
+  childWin.eval(notificationCode);
+
+  const notifier = new childWin.MoodleQuickNotification();
+  notifier.showAnswer({ option: 'C', answer: 'Product Owner' });
+
+  const hostInChild = childWin.document.getElementById('moodle-quick-notify-host');
+  assert.equal(hostInChild, null, 'Child frame must never inject notification host into its own DOM');
+  assert.ok(sentData, 'Child frame must call window.top.postMessage');
+  assert.equal(sentData.type, 'MOODLE_SHOW_NOTIFICATION');
+  assert.equal(sentData.action, 'showAnswer');
+  assert.equal(sentData.payload.option, 'C');
+});
+

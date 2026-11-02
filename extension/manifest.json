@@ -6,7 +6,8 @@
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -17,6 +18,8 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "all_frames": true,
+      "match_about_blank": true,
       "js": [
         "notification.js",
         "screenshot-handler.js",

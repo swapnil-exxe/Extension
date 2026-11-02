@@ -195,8 +195,8 @@
               sx = 0; sy = 0; sw = img.width; sh = img.height;
             }
 
-            // Downscale to max 1200px dimension for fast network latency & lower payload size
-            const maxDim = 1200;
+            // Downscale to max 1600px dimension for optimal OCR legibility and vision model resolution
+            const maxDim = 1600;
             let destW = sw;
             let destH = sh;
             if (destW > maxDim || destH > maxDim) {
@@ -213,10 +213,13 @@
             canvas.height = destH;
 
             const ctx = canvas.getContext('2d');
+            // High-quality image smoothing for crisp text and equations
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(img, sx, sy, sw, sh, 0, 0, destW, destH);
 
-            // Compress to JPEG with 0.80 quality
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.80);
+            // Compress to JPEG with 0.92 high-fidelity quality for sharp OCR
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.92);
             resolve(compressedDataUrl);
           } catch (err) {
             console.warn('[Moodle AI] Image processing failed, using original:', err.message);

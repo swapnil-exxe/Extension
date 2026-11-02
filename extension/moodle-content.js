@@ -111,15 +111,15 @@
         const optionLines = lines.slice(firstOptIndex);
         const options = optionLines.map((optText, idx) => {
           let text = optText;
-          const letterMatch = optText.match(/^([A-Za-z])[\.\:\)\-]\s*(.*)$/);
+          const letterMatch = optText.match(/^([A-Za-z0-9]+)[\.\:\)\-]\s*(.*)$/);
+          const letter = letterMatch ? letterMatch[1].toUpperCase() : String.fromCharCode(65 + idx);
           if (letterMatch) {
-            text = `${letterMatch[1].toUpperCase()}. ${letterMatch[2]}`;
+            text = `${letter}. ${letterMatch[2].trim()}`;
           } else {
-            const letter = String.fromCharCode(65 + idx);
-            text = `${letter}. ${optText}`;
+            text = `${letter}. ${optText.trim()}`;
           }
           return {
-            id: `opt_${idx}`,
+            id: letter,
             text
           };
         });
@@ -938,7 +938,7 @@
     if (!data || (!data.question && (!data.options || data.options.length === 0) && (!data.images || data.images.length === 0))) {
       console.warn('[Moodle AI] Could not confidently identify active question.');
       if (notification) {
-        notification.showError('UNCERTAIN — Question needs verification');
+        notification.showStatus('No question detected. Highlight text or press Shift+X to snip.');
       }
       return;
     }
@@ -1014,13 +1014,23 @@
       const totalClientDurationMs = Math.round(performance.now() - startTime);
 
       lastAnswer = {
+        question: payload.question || '',
         option: res.option || '',
         answer: res.answer || res.answerText || '',
         confidence: res.confidence,
         status: res.status || 'ok',
+        model: res.realUsage?.modelUsed || res.model || '',
+        timestamp: Date.now(),
         latencyMs: res.latencyMs || totalClientDurationMs
       };
       lastProcessedQuestionHash = currentQuestionHash;
+
+      // Persist across all frames, tabs, and page reloads
+      try {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ lastRecordedAnswer: lastAnswer });
+        }
+      } catch (_) {}
 
       if (notification) {
         notification.showAnswer(lastAnswer);
@@ -1047,6 +1057,7 @@
 
     let cropRect = null;
     let partialText = prefilledQuestion || '';
+    let extractedOptions = [];
 
     // If triggered interactively by Shift+X, open the interactive snipping selector
     if (isInteractive && window.MoodleScreenshotHandler && typeof window.MoodleScreenshotHandler.promptUserSelectionArea === 'function') {
@@ -1055,13 +1066,35 @@
         console.log('[Moodle AI] Screenshot selection cancelled.');
         return;
       }
+
+      // Opportunistically detect if snipped area overlaps a quiz question element on the page
+      try {
+        const centerX = cropRect.x + cropRect.width / 2;
+        const centerY = cropRect.y + cropRect.height / 2;
+        const elUnder = document.elementFromPoint(centerX, centerY);
+        if (elUnder) {
+          const questionContainer = elUnder.closest('.que, .question, [class*="quiz"], [id*="question"]');
+          if (questionContainer) {
+            const data = extractQuestionData(questionContainer);
+            if (data) {
+              if (!partialText) partialText = data.question;
+              if (Array.isArray(data.options) && data.options.length > 0) {
+                extractedOptions = data.options;
+              }
+            }
+          }
+        }
+      } catch (_) {}
     } else {
       const questionEl = getTargetQuestionElement();
       if (questionEl && window.MoodleScreenshotHandler) {
         cropRect = window.MoodleScreenshotHandler.getQuestionCropRect(questionEl);
         if (!partialText) {
           const data = extractQuestionData(questionEl);
-          if (data) partialText = data.question;
+          if (data) {
+            partialText = data.question;
+            if (Array.isArray(data.options)) extractedOptions = data.options;
+          }
         }
       }
     }
@@ -1089,6 +1122,7 @@
           platform: 'moodle',
           questionType: 'vision',
           question: partialText || 'Identify the question shown in the selected area and determine the best answer.',
+          options: extractedOptions || [],
           image: finalImageUrl
         }
       });
@@ -1099,9 +1133,20 @@
 
       const res = response.data;
       lastAnswer = {
+        question: partialText || 'Screen Snippet',
         option: res.option || '',
-        answer: res.answer || ''
+        answer: res.answer || '',
+        confidence: res.confidence || 0.95,
+        status: res.status || 'ok',
+        model: res.realUsage?.modelUsed || res.model || '',
+        timestamp: Date.now()
       };
+
+      try {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ lastRecordedAnswer: lastAnswer });
+        }
+      } catch (_) {}
 
       if (notification) {
         notification.showAnswer(lastAnswer);
@@ -1115,13 +1160,26 @@
   /**
    * Execute Shortcut 3: Shift + A — Show the Last Answer Again
    */
-  function showLastAnswerAgain() {
+  async function showLastAnswerAgain() {
     if (!notification) return;
 
-    if (lastAnswer && (lastAnswer.answer || lastAnswer.option)) {
-      notification.showAnswer(lastAnswer);
+    let answerObj = lastAnswer;
+    if (!answerObj || (!answerObj.answer && !answerObj.option)) {
+      try {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          const st = await chrome.storage.local.get(['lastRecordedAnswer']);
+          if (st.lastRecordedAnswer && (st.lastRecordedAnswer.answer || st.lastRecordedAnswer.option)) {
+            answerObj = st.lastRecordedAnswer;
+            lastAnswer = answerObj;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (answerObj && (answerObj.answer || answerObj.option)) {
+      notification.showAnswer(answerObj);
     } else {
-      notification.showError('No previous answer recorded');
+      notification.showStatus('No previous answer recorded yet');
     }
   }
 
@@ -1139,6 +1197,8 @@
     return false;
   }
 
+  let lastShortcutEventTime = 0;
+
   /**
    * Attach keyboard shortcuts on window (Shift+Z, Shift+X, Shift+A)
    */
@@ -1150,17 +1210,34 @@
       const key = (e.key || '').toUpperCase();
       const code = (e.code || '');
 
-      if (key === 'Z' || code === 'KeyZ') {
+      const isZ = (key === 'Z' || code === 'KeyZ');
+      const isX = (key === 'X' || code === 'KeyX');
+      const isA = (key === 'A' || code === 'KeyA');
+
+      if (!isZ && !isX && !isA) return;
+
+      // Global debounce to prevent duplicate events between frame DOM listeners and background commands
+      const now = Date.now();
+      if (now - lastShortcutEventTime < 450) {
         e.preventDefault();
         e.stopPropagation();
+        return;
+      }
+      lastShortcutEventTime = now;
+
+      // In child frames: if focus is NOT inside this frame, do not trigger
+      if (window !== window.top && typeof document.hasFocus === 'function' && !document.hasFocus()) {
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (isZ) {
         solveCurrentQuestion();
-      } else if (key === 'X' || code === 'KeyX') {
-        e.preventDefault();
-        e.stopPropagation();
+      } else if (isX) {
         solveQuestionScreenshot('', true);
-      } else if (key === 'A' || code === 'KeyA') {
-        e.preventDefault();
-        e.stopPropagation();
+      } else if (isA) {
         showLastAnswerAgain();
       }
     }, true);
@@ -1171,19 +1248,47 @@
    */
   function attachMessageListener() {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      // If message is restricted to top frame only and this is a child frame, ignore
+      if (message.topFrameOnly && window !== window.top) {
+        sendResponse({ success: true, skippedChildFrame: true });
+        return true;
+      }
+
+      const now = Date.now();
+
       if (message.action === 'TRIGGER_SOLVE_QUESTION') {
+        if (now - lastShortcutEventTime < 450) {
+          sendResponse({ success: true, debounced: true });
+          return true;
+        }
+        lastShortcutEventTime = now;
         solveCurrentQuestion();
         sendResponse({ success: true });
         return true;
       }
 
       if (message.action === 'TRIGGER_SOLVE_SCREENSHOT') {
+        if (now - lastShortcutEventTime < 450) {
+          sendResponse({ success: true, debounced: true });
+          return true;
+        }
+        lastShortcutEventTime = now;
         solveQuestionScreenshot('', true);
         sendResponse({ success: true });
         return true;
       }
 
       if (message.action === 'TRIGGER_SHOW_LAST_ANSWER') {
+        // Enforce that only ONE frame ever displays the previous answer
+        if (window !== window.top) {
+          sendResponse({ success: true, skippedChildFrame: true });
+          return true;
+        }
+        if (now - lastShortcutEventTime < 450) {
+          sendResponse({ success: true, debounced: true });
+          return true;
+        }
+        lastShortcutEventTime = now;
         showLastAnswerAgain();
         sendResponse({ success: true });
         return true;

@@ -188,14 +188,74 @@ flowchart LR
 ### Backend Service (`/backend`)
 | File | Purpose |
 | :--- | :--- |
-| [`server.js`](file:///Users/swapnil/Documents/extention/backend/server.js) | Express entry point configured with Helmet security headers, CORS origin verification, and rate limiting (60 req/min). |
+| [`server.js`](file:///Users/swapnil/Documents/extention/backend/server.js) | Express entry point configured with Helmet security headers, CORS origin verification, bound to `127.0.0.1`. |
 | [`routes/answer.js`](file:///Users/swapnil/Documents/extention/backend/routes/answer.js) | Primary API route (`POST /api/answer`). Implements SHA-256 LRU caching per API key/provider and routes questions to the LLM engine. |
+| [`routes/ollama.js`](file:///Users/swapnil/Documents/extention/backend/routes/ollama.js) | Local Ollama API routes (`GET /api/ollama/status`, `GET /api/ollama/models`, `POST /api/solve`). |
 | [`routes/auth.js`](file:///Users/swapnil/Documents/extention/backend/routes/auth.js) | Authentication and provider status endpoints (`GET /api/auth/status`, `POST /api/auth/select`, OAuth flows). |
-| [`services/llm-provider.js`](file:///Users/swapnil/Documents/extention/backend/services/llm-provider.js) | Multi-key Gemini pool manager, OpenAI integration, candidate model rotation (`gemini-3.1-flash-lite`), vision capability verification, and resilient 3-tier JSON parser. |
-| [`validation/answer-schema.js`](file:///Users/swapnil/Documents/extention/backend/validation/answer-schema.js) | Strict Zod validation schemas validating question types, options, base64 image strings, and LLM output format. |
+| [`services/ollama-service.js`](file:///Users/swapnil/Documents/extention/backend/services/ollama-service.js) | Dynamic Ollama model detection, capability detection (Vision/Text/Unknown), model validation, and generation. |
+| [`services/llm-provider.js`](file:///Users/swapnil/Documents/extention/backend/services/llm-provider.js) | Multi-key Gemini pool manager, OpenAI integration, Ollama routing, vision capability verification, and resilient 3-tier JSON parser. |
+| [`validation/answer-schema.js`](file:///Users/swapnil/Documents/extention/backend/validation/answer-schema.js) | Strict Zod validation schemas validating question types, options, base64 image strings, Ollama parameters, and LLM output format. |
+| [`tests/ollama.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/ollama.test.js) | Comprehensive Ollama unit & integration tests covering model detection, dynamic selection, vision capability, and error handling. |
 | [`tests/fixtures-adapter.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/fixtures-adapter.test.js) | DOM extraction tests across Moodle and custom quiz fixtures, verifying single choice, math formulas, code snippets, image-based questions, and stealth Shift+X overlay. |
 | [`tests/server.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/server.test.js) | API route integration tests covering caching, rate limiting, and response payloads. |
 | [`tests/auth.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/auth.test.js) | Provider switching, PKCE flow validation, and CSRF protection tests. |
+
+---
+
+## 🐧 Ubuntu Linux & Ollama Local AI Setup
+
+This project supports **100% private, offline inference** using [Ollama](https://ollama.com) on Ubuntu Linux (and other OS):
+
+### 1. Install Ollama on Ubuntu
+Open your Ubuntu Terminal and run the official installation script:
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+*(On modern systemd Linux distributions, Ollama installs and automatically starts as a background service on `http://127.0.0.1:11434`.)*
+
+### 2. Download (Pull) AI Models
+Initial model downloads require internet access, but after downloading, **inference runs 100% locally and completely offline**:
+
+```bash
+# High-speed text model:
+ollama pull gemma3:4b
+
+# Or Llama 3.2:
+ollama pull llama3.2:latest
+
+# Vision-capable model (for diagram & screenshot questions):
+ollama pull llama3.2-vision:11b
+```
+
+### 3. Verify Installed Models
+```bash
+ollama list
+```
+
+### 4. Test Model in Terminal (Optional)
+```bash
+ollama run gemma3:4b
+```
+
+### 5. Start the Local Backend
+In the project directory on your Ubuntu machine:
+```bash
+cd backend
+npm install
+HOST=127.0.0.1 PORT=3000 npm start
+```
+The backend binds securely to `http://127.0.0.1:3000`.
+
+### 6. Connect Chrome Extension
+1. Open the extension **Settings ⚙** page (`chrome-extension://.../settings.html`).
+2. Under **AI Provider Engine**, select **🦙 Ollama Local AI (Ubuntu / Localhost)**.
+3. Click **Check Ollama Status** to confirm connectivity.
+4. Click **🔄 Refresh Models**: all models installed in your terminal are automatically listed with their sizes, families, and capability tags (`[Text]`, `[Vision]`, `[Unknown]`).
+5. Select your desired model (e.g. `gemma3:4b`), click **Save Settings**, and you're ready to solve questions completely locally!
+
+> **Dynamic Model Management**: Whenever you pull or remove a model in Ubuntu terminal (`ollama pull` or `ollama rm`), simply click **Refresh Models** in the extension to instantly see the updated list without changing any source code!
+
+---
 
 ---
 
@@ -220,30 +280,24 @@ flowchart LR
 
 ---
 
-## 🧪 Automated Testing
+## 🧪 Automated Testing & Benchmarking Suite
 
-The project includes a comprehensive automated test suite with **46 tests** covering DOM adapters, multimodal image decoding, stealth overlay, caching, and rate limiting:
+The project includes an automated test suite with **66 tests** covering DOM adapters, multimodal image decoding, stealth overlay, subject-specific academic reasoning, 12-question offline benchmark suite, Ollama local model detection, dynamic model selection, capability detection, caching, and rate limiting:
 
 ```bash
 npm test
 ```
 
 ```text
-✔ GET /api/auth/status returns initial providers and active selection
-✔ POST /api/auth/start generates valid Google Gemini OAuth flow with PKCE
-✔ Fixtures 1-9: Single-choice, multiple-answer, math, code & dynamic quiz extraction
-✔ GeeksforGeeks Layout: Shift+Z automatically extracts question and options
+✔ Subject Expert: Correctly classifies all academic domains (DBMS, OS, CN, DAA, TOC, AISC, SE, Math, Programming)
+✔ Benchmark Suite: Offline Ollama Pipeline Evaluates 12 Benchmark Questions
+✔ Benchmark Suite: Unsolvable/empty option reconciliation gracefully avoids error
+✔ Model Detection: Multiple installed models with mixed capabilities
+✔ AI Generation: Text question evaluation via POST /api/solve and unified POST /api/answer
+✔ AI Generation: Vision model accepts image and solves correctly
 ✔ Shortcuts 1-3: Shift+Z, Shift+X, Shift+A handlers
-✔ Image-only Moodle question with 4 text options via Shift+Z
-✔ Image + Text question includes both text prompt and image payload
-✔ Multiple images in a question are extracted in DOM order
-✔ Neighboring question isolation: images and options never leak
-✔ Shift + X preserves normal page brightness with transparent overlay and updates answer popup in-place
-✔ Vision support verification: isVisionSupported confirms image capability
-✔ POST /api/answer succeeds with single_choice, numerical, and vision questions
-✔ Cache separates different providers and models for same question
 
-ℹ tests 46 | ℹ pass 46 | ℹ fail 0 (100% Passing)
+ℹ tests 66 | ℹ pass 66 | ℹ fail 0 (100% Passing)
 ```
 
 ---

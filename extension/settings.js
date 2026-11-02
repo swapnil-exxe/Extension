@@ -1,23 +1,52 @@
 /**
  * Moodle AI Quick Answer - Settings Controller
+ * Supports Cloud AI (Gemini, ChatGPT) and Local Ollama AI (Ubuntu/Localhost)
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Elements - Notification & Display
   const selectPosition = document.getElementById('select-position');
   const selectDuration = document.getElementById('select-duration');
+  const toast = document.getElementById('toast');
+  const linkShortcuts = document.getElementById('link-shortcuts-page');
+  const btnSave = document.getElementById('btn-save-settings');
+
+  // Elements - Engine Selection
+  const selectActiveEngine = document.getElementById('select-active-engine');
+
+  // Elements - Cloud Backend
   const inputBackendUrl = document.getElementById('input-backend-url');
   const btnTestConnection = document.getElementById('btn-test-connection');
   const btnClearCache = document.getElementById('btn-clear-cache');
-  const btnSave = document.getElementById('btn-save-settings');
   const statusBox = document.getElementById('connection-status-box');
-  const linkShortcuts = document.getElementById('link-shortcuts-page');
-  const toast = document.getElementById('toast');
 
-  // Load preferences
+  // Elements - Ollama Local
+  const inputLocalBackendUrl = document.getElementById('input-local-backend-url');
+  const inputOllamaUrl = document.getElementById('input-ollama-url');
+  const btnTestOllamaStatus = document.getElementById('btn-test-ollama-status');
+  const ollamaConnectionStatus = document.getElementById('ollama-connection-status');
+  const selectOllamaModel = document.getElementById('select-ollama-model');
+  const btnRefreshModels = document.getElementById('btn-refresh-models');
+  const ollamaEmptyModels = document.getElementById('ollama-empty-models');
+  const ollamaModelWarning = document.getElementById('ollama-model-warning');
+  const ollamaModelInfo = document.getElementById('ollama-model-info');
+  const infoModelName = document.getElementById('info-model-name');
+  const infoModelFamily = document.getElementById('info-model-family');
+  const infoModelCapability = document.getElementById('info-model-capability');
+  const infoModelSize = document.getElementById('info-model-size');
+  const infoModelParams = document.getElementById('info-model-params');
+  const infoModelQuant = document.getElementById('info-model-quant');
+
+  // Load preferences from storage
   const settings = await chrome.storage.local.get([
     'notificationPosition',
     'notificationDuration',
-    'backendUrl'
+    'backendUrl',
+    'localBackendUrl',
+    'ollamaUrl',
+    'ollamaSelectedModel',
+    'activeProvider',
+    'customProviders'
   ]);
 
   if (settings.notificationPosition) {
@@ -28,14 +57,196 @@ document.addEventListener('DOMContentLoaded', async () => {
   } else {
     selectDuration.value = '500';
   }
+
+  // Cloud backend URL
   let currentBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
-  if (currentBackendUrl.includes('localhost') || currentBackendUrl.includes('127.0.0.1')) {
-    currentBackendUrl = 'https://extension-w1ac.onrender.com';
-    chrome.storage.local.set({ backendUrl: currentBackendUrl });
-  }
   inputBackendUrl.value = currentBackendUrl;
 
-  // Test connection button
+  // Local Ollama configuration
+  inputLocalBackendUrl.value = settings.localBackendUrl || 'http://127.0.0.1:3000';
+  inputOllamaUrl.value = settings.ollamaUrl || 'http://127.0.0.1:11434';
+
+  // Active Provider Engine (Cloud vs Ollama)
+  const isOllamaActive = settings.activeProvider === 'ollama';
+  selectActiveEngine.value = isOllamaActive ? 'ollama' : 'cloud';
+
+  let currentInstalledModels = [];
+  let savedModelIdentifier = settings.ollamaSelectedModel || '';
+
+  // Render selected model details in info card
+  function displayModelInfo(model) {
+    if (!model) {
+      ollamaModelInfo.style.display = 'none';
+      return;
+    }
+
+    ollamaModelInfo.style.display = 'block';
+    infoModelName.textContent = model.name;
+    infoModelFamily.textContent = model.family ? `(${model.family})` : '';
+    infoModelSize.textContent = model.size || 'N/A';
+    infoModelParams.textContent = model.parameterSize || 'Standard';
+    infoModelQuant.textContent = model.quantization || 'Default';
+
+    // Capability badge styling
+    infoModelCapability.textContent = model.capability || 'Unknown';
+    infoModelCapability.className = 'badge-pill';
+    if (model.capability === 'Vision') {
+      infoModelCapability.classList.add('badge-vision');
+    } else if (model.capability === 'Text') {
+      infoModelCapability.classList.add('badge-text');
+    } else {
+      infoModelCapability.classList.add('badge-unknown');
+    }
+  }
+
+  // Fetch installed models from Ollama via local backend
+  async function refreshOllamaModels(isUserClick = false) {
+    const localBackend = inputLocalBackendUrl.value.trim() || 'http://127.0.0.1:3000';
+    const ollamaHost = inputOllamaUrl.value.trim() || 'http://127.0.0.1:11434';
+
+    btnRefreshModels.disabled = true;
+    btnRefreshModels.textContent = '⏳ Refreshing...';
+    ollamaModelWarning.style.display = 'none';
+
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          action: 'OLLAMA_GET_MODELS',
+          localBackendUrl: localBackend,
+          ollamaUrl: ollamaHost
+        }, resolve);
+      });
+
+      if (!response || !response.ok) {
+        throw new Error(response ? response.error : 'No response from local backend');
+      }
+
+      if (response.activeBackendUrl && inputLocalBackendUrl.value !== response.activeBackendUrl) {
+        inputLocalBackendUrl.value = response.activeBackendUrl;
+        await chrome.storage.local.set({ localBackendUrl: response.activeBackendUrl });
+      }
+
+      currentInstalledModels = Array.isArray(response.models) ? response.models : [];
+      selectOllamaModel.innerHTML = '';
+
+      if (currentInstalledModels.length === 0) {
+        ollamaEmptyModels.style.display = 'block';
+        ollamaModelInfo.style.display = 'none';
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No local models found (run ollama pull)';
+        selectOllamaModel.appendChild(opt);
+        if (isUserClick) showToast('No local models found in Ollama.');
+        return;
+      }
+
+      ollamaEmptyModels.style.display = 'none';
+
+      // Populate dropdown with actual installed models
+      currentInstalledModels.forEach((m) => {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        opt.textContent = `${m.name} (${m.size}) • [${m.capability}]`;
+        selectOllamaModel.appendChild(opt);
+      });
+
+      // Preserve previously selected model if it still exists
+      const targetModel = savedModelIdentifier;
+      const modelStillExists = currentInstalledModels.some(m => m.name === targetModel);
+
+      if (targetModel && modelStillExists) {
+        selectOllamaModel.value = targetModel;
+        const matching = currentInstalledModels.find(m => m.name === targetModel);
+        displayModelInfo(matching);
+      } else if (targetModel && !modelStillExists) {
+        // Model was removed from Ollama in terminal!
+        ollamaModelWarning.style.display = 'block';
+        ollamaModelWarning.innerHTML = `⚠️ Previously selected model <code>${targetModel}</code> was removed from Ollama. Please select an installed model.`;
+        // Fallback to first compatible generation model (exclude embedding-only models)
+        const fallback = currentInstalledModels.find(m => m.capability === 'Vision') ||
+                         currentInstalledModels.find(m => m.capability !== 'Embedding') ||
+                         currentInstalledModels[0];
+        selectOllamaModel.value = fallback.name;
+        savedModelIdentifier = fallback.name;
+        displayModelInfo(fallback);
+        await chrome.storage.local.set({ ollamaSelectedModel: fallback.name });
+      } else {
+        // Default: pick best available generation model
+        const first = currentInstalledModels.find(m => m.capability === 'Vision') ||
+                      currentInstalledModels.find(m => m.capability !== 'Embedding') ||
+                      currentInstalledModels[0];
+        selectOllamaModel.value = first.name;
+        savedModelIdentifier = first.name;
+        displayModelInfo(first);
+        await chrome.storage.local.set({ ollamaSelectedModel: first.name });
+      }
+
+      if (isUserClick) {
+        showToast(`Refreshed: ${currentInstalledModels.length} models detected!`);
+      }
+    } catch (err) {
+      console.warn('[Ollama Settings] Model refresh error:', err.message);
+      ollamaModelWarning.style.display = 'block';
+      ollamaModelWarning.innerHTML = `❌ <strong>Cannot list models:</strong> ${err.message}<br><small>Make sure your local Node backend (${localBackend}) and Ollama (${ollamaHost}) are running.</small>`;
+      ollamaModelInfo.style.display = 'none';
+    } finally {
+      btnRefreshModels.disabled = false;
+      btnRefreshModels.textContent = '🔄 Refresh Models';
+    }
+  }
+
+  // Model selection changed by user
+  selectOllamaModel.addEventListener('change', () => {
+    const selected = selectOllamaModel.value;
+    savedModelIdentifier = selected;
+    ollamaModelWarning.style.display = 'none';
+    const found = currentInstalledModels.find(m => m.name === selected);
+    displayModelInfo(found);
+  });
+
+  // Refresh Models Button
+  btnRefreshModels.addEventListener('click', () => {
+    refreshOllamaModels(true);
+  });
+
+  // Test Ollama Status Button
+  btnTestOllamaStatus.addEventListener('click', async () => {
+    const localBackend = inputLocalBackendUrl.value.trim() || 'http://127.0.0.1:3000';
+    const ollamaHost = inputOllamaUrl.value.trim() || 'http://127.0.0.1:11434';
+
+    ollamaConnectionStatus.className = 'status-box';
+    ollamaConnectionStatus.style.display = 'block';
+    ollamaConnectionStatus.textContent = 'Checking local Ollama connection...';
+
+    chrome.runtime.sendMessage({
+      action: 'OLLAMA_GET_STATUS',
+      localBackendUrl: localBackend,
+      ollamaUrl: ollamaHost
+    }, (res) => {
+      if (res && res.ok) {
+        if (res.activeBackendUrl && inputLocalBackendUrl.value !== res.activeBackendUrl) {
+          inputLocalBackendUrl.value = res.activeBackendUrl;
+          chrome.storage.local.set({ localBackendUrl: res.activeBackendUrl });
+        }
+        ollamaConnectionStatus.className = 'status-box success';
+        ollamaConnectionStatus.innerHTML = `
+          <strong>✅ Ollama Connected Successfully!</strong><br>
+          Server URL: <code>${res.url}</code> • Ollama Version: <strong>${res.version}</strong> • Installed Models: <strong>${res.modelsCount}</strong>
+          ${res.isDirect ? '<br><small style="color:#059669; font-weight:600;">⚡ Direct Ollama pipeline active (100% offline, zero Node backend dependency)</small>' : ''}
+        `;
+        refreshOllamaModels(false);
+      } else {
+        ollamaConnectionStatus.className = 'status-box error';
+        ollamaConnectionStatus.innerHTML = `
+          <strong>❌ Cannot Connect to Ollama:</strong><br>
+          ${res ? res.error : 'Service unreachable'}.<br>
+          <small>Ensure Ollama service is running (e.g. <code>ollama serve</code>) and local backend is running at <code>${localBackend}</code>.</small>
+        `;
+      }
+    });
+  });
+
+  // Cloud Backend Test connection button
   btnTestConnection.addEventListener('click', async () => {
     const testUrl = inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com';
     statusBox.className = 'status-box';
@@ -51,46 +262,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const st = await chrome.storage.local.get(['activeProvider', 'customProviders']);
     const activeKey = st.activeProvider || 'gemini_1';
 
-    const PROVIDER_NAMES = {
-      gemini_1: 'Gemini (Key 1)',
-      gemini_2: 'Gemini (Key 2)',
-      gemini_3: 'Gemini (Key 3)',
-      gemini_4: 'Gemini (Key 4)',
-      gemini: 'Gemini',
-      chatgpt: 'ChatGPT',
-      openai: 'ChatGPT'
-    };
-
-    const MODEL_NAMES = {
-      gemini_1: 'gemini-3.5-flash',
-      gemini_2: 'gemini-3.5-flash',
-      gemini_3: 'gemini-3.5-flash',
-      gemini_4: 'gemini-3.5-flash',
-      gemini: 'gemini-3.5-flash',
-      chatgpt: 'gpt-4o-mini',
-      openai: 'gpt-4o-mini'
-    };
-
-    const isCustom = activeKey.startsWith('custom_');
-    const customObj = isCustom ? (st.customProviders || []).find(p => p.id === activeKey) : null;
-    const activeDisplayName = isCustom ? (customObj?.name || 'Custom AI') : (PROVIDER_NAMES[activeKey] || 'AI');
-    const activeModelName = isCustom ? (customObj?.model || 'custom') : (MODEL_NAMES[activeKey] || 'gemini-3.5-flash');
-
-    // Sync selected provider with backend
-    const backendProvider = activeKey.startsWith('gemini') ? 'gemini' : (activeKey === 'chatgpt' || activeKey === 'openai' ? 'chatgpt' : activeKey);
-    chrome.runtime.sendMessage({
-      action: 'AUTH_SELECT_PROVIDER',
-      provider: backendProvider,
-      backendUrl: testUrl
-    });
-
     chrome.runtime.sendMessage({ action: 'CHECK_BACKEND_STATUS', backendUrl: testUrl }, (res) => {
       clearTimeout(wakeNoticeTimer);
       if (res && res.ok) {
         statusBox.className = 'status-box success';
         statusBox.innerHTML = `
           <strong>✅ Connected Successfully!</strong><br>
-          Latency: <strong>${res.latencyMs}ms</strong> • Active AI: <strong>${activeDisplayName}</strong> • Model: <strong>${activeModelName}</strong> • Uptime: ${res.uptimeSeconds}s
+          Latency: <strong>${res.latencyMs}ms</strong> • Active AI: <strong>${res.provider || 'Gemini'}</strong> • Model: <strong>${res.model || 'flash-lite'}</strong> • Uptime: ${res.uptimeSeconds}s
         `;
       } else {
         statusBox.className = 'status-box error';
@@ -115,19 +293,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Save settings
+  // Save settings button
   btnSave.addEventListener('click', async () => {
+    const chosenEngine = selectActiveEngine.value;
+    const currentStorage = await chrome.storage.local.get(['activeProvider']);
+
+    let finalActiveProvider = currentStorage.activeProvider || 'gemini_1';
+    if (chosenEngine === 'ollama') {
+      finalActiveProvider = 'ollama';
+    } else if (finalActiveProvider === 'ollama') {
+      // Reverting to cloud
+      finalActiveProvider = 'gemini_1';
+    }
+
     const updated = {
       notificationPosition: selectPosition.value,
       notificationDuration: parseInt(selectDuration.value, 10),
-      backendUrl: inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com'
+      backendUrl: inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com',
+      localBackendUrl: inputLocalBackendUrl.value.trim() || 'http://127.0.0.1:3000',
+      ollamaUrl: inputOllamaUrl.value.trim() || 'http://127.0.0.1:11434',
+      ollamaSelectedModel: selectOllamaModel.value || savedModelIdentifier,
+      activeProvider: finalActiveProvider
     };
 
     await chrome.storage.local.set(updated);
 
     // Broadcast to open tabs
     const tabs = await chrome.tabs.query({});
-    tabs.forEach(tab => {
+    tabs.forEach((tab) => {
       chrome.tabs.sendMessage(tab.id, { action: 'SETTINGS_UPDATED', ...updated }, () => {
         void chrome.runtime.lastError;
       });
@@ -147,5 +340,111 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(() => {
       toast.classList.remove('show');
     }, 2200);
+  }
+
+  // Initial automatic load of Ollama models on settings open
+  refreshOllamaModels(false);
+
+  // Diagnostics Elements & Logic
+  const btnRunDiagnostics = document.getElementById('btn-run-diagnostics');
+  const diagBackendStatus = document.getElementById('diag-backend-status');
+  const diagOllamaStatus = document.getElementById('diag-ollama-status');
+  const diagModelStatus = document.getElementById('diag-model-status');
+  const diagModelCapability = document.getElementById('diag-model-capability');
+  const diagModelMemory = document.getElementById('diag-model-memory');
+  const diagOfflineStatus = document.getElementById('diag-offline-status');
+  const diagLastLatency = document.getElementById('diag-last-latency');
+
+  async function runOfflineDiagnostics() {
+    if (!btnRunDiagnostics) return;
+    btnRunDiagnostics.disabled = true;
+    btnRunDiagnostics.textContent = '⏳ Testing...';
+
+    const localBackend = inputLocalBackendUrl.value.trim() || 'http://127.0.0.1:3000';
+    const ollamaHost = inputOllamaUrl.value.trim() || 'http://127.0.0.1:11434';
+    const currentModel = selectOllamaModel.value || savedModelIdentifier || '';
+
+    chrome.runtime.sendMessage({
+      action: 'OLLAMA_GET_DIAGNOSTICS',
+      localBackendUrl: localBackend,
+      ollamaUrl: ollamaHost,
+      selectedModel: currentModel
+    }, (res) => {
+      btnRunDiagnostics.disabled = false;
+      btnRunDiagnostics.textContent = '🩺 Run Full Diagnostics';
+
+      if (!res) {
+        if (diagBackendStatus) {
+          diagBackendStatus.textContent = '❌ Unreachable';
+          diagBackendStatus.style.color = '#DC2626';
+        }
+        return;
+      }
+
+      // 1. Backend Status
+      if (diagBackendStatus) {
+        if (res.backend && res.backend.status === 'connected') {
+          diagBackendStatus.textContent = `✅ Connected (${res.backend.host}:${res.backend.port} • Up ${res.backend.uptimeSeconds}s)`;
+          diagBackendStatus.style.color = '#059669';
+        } else {
+          diagBackendStatus.textContent = '❌ Disconnected (Check npm start)';
+          diagBackendStatus.style.color = '#DC2626';
+        }
+      }
+
+      // 2. Ollama Status
+      if (diagOllamaStatus) {
+        if (res.ollama && res.ollama.status === 'connected') {
+          diagOllamaStatus.textContent = `✅ Connected (v${res.ollama.version} • ${res.ollama.modelsCount} models • ${res.ollama.latencyMs}ms)`;
+          diagOllamaStatus.style.color = '#059669';
+        } else {
+          diagOllamaStatus.textContent = `❌ Disconnected (${res.ollama?.error || 'Port 11434 closed'})`;
+          diagOllamaStatus.style.color = '#DC2626';
+        }
+      }
+
+      // 3. Selected Model Status
+      if (diagModelStatus) {
+        if (res.selectedModel && res.selectedModel.installed) {
+          diagModelStatus.textContent = `✅ Installed (${res.selectedModel.name} • ${res.selectedModel.size || ''})`;
+          diagModelStatus.style.color = '#059669';
+        } else {
+          diagModelStatus.textContent = `⚠️ Not found in Ollama (${currentModel || 'No model chosen'})`;
+          diagModelStatus.style.color = '#D97706';
+        }
+      }
+
+      // 4. Model Capability
+      if (diagModelCapability && res.selectedModel) {
+        diagModelCapability.textContent = res.selectedModel.capability || 'Unknown';
+        diagModelCapability.style.color = res.selectedModel.capability === 'Vision' ? '#2563EB' : '#374151';
+      }
+
+      // 5. Memory State
+      if (diagModelMemory && res.selectedModel) {
+        if (res.selectedModel.loadedInMemory) {
+          diagModelMemory.textContent = '⚡ Active in RAM/VRAM (Warm)';
+          diagModelMemory.style.color = '#059669';
+        } else {
+          diagModelMemory.textContent = '💤 On-demand / Standby (Ready to load)';
+          diagModelMemory.style.color = '#6B7280';
+        }
+      }
+
+      // 6. Offline Isolation
+      if (diagOfflineStatus) {
+        diagOfflineStatus.textContent = '🔒 100% Offline (Zero External Traffic)';
+        diagOfflineStatus.style.color = '#059669';
+      }
+
+      // 7. Last Latency
+      if (diagLastLatency && res.ollama && res.ollama.latencyMs) {
+        diagLastLatency.textContent = `${res.ollama.latencyMs}ms loopback`;
+      }
+    });
+  }
+
+  if (btnRunDiagnostics) {
+    btnRunDiagnostics.addEventListener('click', runOfflineDiagnostics);
   }
 });

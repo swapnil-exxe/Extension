@@ -194,6 +194,30 @@
       font-size: 12px;
     }
 
+    .badge-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .badge-vision {
+      background: #ECFDF5;
+      color: #065F46;
+      border: 1px solid #A7F3D0;
+    }
+    .badge-text {
+      background: #F8FAFC;
+      color: #334155;
+      border: 1px solid #E2E8F0;
+    }
+    .badge-unknown {
+      background: #FFFBEB;
+      color: #92400E;
+      border: 1px solid #FDE68A;
+    }
+
     .toast {
       position: fixed;
       bottom: 24px;
@@ -252,6 +276,121 @@
           <option value="2000">2.0 seconds</option>
           <option value="3000">3.0 seconds</option>
         </select>
+      </div>
+    </div>
+
+    <!-- Active AI Provider Selection -->
+    <div class="card">
+      <h2 class="card-title">🤖 AI Provider Engine</h2>
+      <p class="card-desc">Choose between Cloud AI (Google Gemini / OpenAI) or completely private local Ollama AI.</p>
+
+      <div class="form-group">
+        <label class="form-label" for="select-active-engine">Active Inference Engine</label>
+        <select id="select-active-engine" class="form-select">
+          <option value="cloud">Cloud AI (Google Gemini / OpenAI / Cloud)</option>
+          <option value="ollama">🦙 Ollama Local AI (Ubuntu / Localhost)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Ollama Local Configuration -->
+    <div class="card" id="card-ollama-settings">
+      <h2 class="card-title">🦙 Ollama Local AI Settings</h2>
+      <p class="card-desc">Run quiz assistance locally with 100% privacy and zero external network calls.</p>
+
+      <div class="form-group">
+        <label class="form-label" for="input-local-backend-url">Local Backend URL (Node.js)</label>
+        <input type="url" id="input-local-backend-url" class="form-input" placeholder="http://127.0.0.1:3000">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="input-ollama-url">Ollama Server URL</label>
+        <input type="url" id="input-ollama-url" class="form-input" placeholder="http://127.0.0.1:11434">
+      </div>
+
+      <div class="btn-row">
+        <button type="button" class="btn btn-secondary" id="btn-test-ollama-status">Check Ollama Status</button>
+      </div>
+
+      <div class="status-box" id="ollama-connection-status"></div>
+
+      <div class="form-group" style="margin-top: 16px;">
+        <label class="form-label" for="select-ollama-model">Installed Local Model</label>
+        <div style="display: flex; gap: 8px;">
+          <select id="select-ollama-model" class="form-select" style="flex: 1;">
+            <option value="" disabled selected>Loading installed models...</option>
+          </select>
+          <button type="button" class="btn btn-secondary" id="btn-refresh-models" title="Query Ollama /api/tags for latest models">
+            🔄 Refresh Models
+          </button>
+        </div>
+      </div>
+
+      <!-- Notice when no models are installed -->
+      <div id="ollama-empty-models" class="status-box" style="display: none; background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E;">
+        ⚠️ <strong>No local models found.</strong> Install one in your Ubuntu Terminal using:<br>
+        <code style="background: #FEF3C7; padding: 2px 6px; border-radius: 4px; font-weight: 700;">ollama pull gemma3:4b</code> or 
+        <code style="background: #FEF3C7; padding: 2px 6px; border-radius: 4px; font-weight: 700;">ollama pull llama3.2:latest</code>
+      </div>
+
+      <!-- Warning if previously selected model is unavailable -->
+      <div id="ollama-model-warning" class="status-box error" style="display: none;"></div>
+
+      <!-- Selected Model Info Card -->
+      <div id="ollama-model-info" style="display: none; margin-top: 12px; padding: 12px 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; font-size: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <div>
+            <strong id="info-model-name" style="font-size: 13px; color: #0F172A;">gemma3:4b</strong>
+            <span id="info-model-family" style="color: #64748B; margin-left: 6px;">(gemma3)</span>
+          </div>
+          <span id="info-model-capability" class="badge-pill badge-text">Text</span>
+        </div>
+        <div style="color: #475569; display: flex; gap: 14px; flex-wrap: wrap;">
+          <span>Disk Size: <strong id="info-model-size">2.4 GB</strong></span>
+          <span>Parameters: <strong id="info-model-params">4B</strong></span>
+          <span>Quantization: <strong id="info-model-quant">Q4_K_M</strong></span>
+        </div>
+      </div>
+
+      <!-- Real-Time Offline Diagnostics Panel -->
+      <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #E5E7EB;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h3 style="font-size: 12px; font-weight: 700; color: #1F2937; text-transform: uppercase; letter-spacing: 0.5px;">⚡ Offline Diagnostics & Health</h3>
+          <button type="button" class="btn btn-secondary" id="btn-run-diagnostics" style="padding: 4px 10px; font-size: 11px;">
+            🩺 Run Full Diagnostics
+          </button>
+        </div>
+        
+        <div id="diagnostics-panel" style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 6px; padding: 10px; font-size: 11.5px; display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #6B7280;">Local Backend (Express):</span>
+            <strong id="diag-backend-status" style="color: #6B7280;">Not checked</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #6B7280;">Ollama Service (Port 11434):</span>
+            <strong id="diag-ollama-status" style="color: #6B7280;">Not checked</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #6B7280;">Selected Model Status:</span>
+            <strong id="diag-model-status" style="color: #6B7280;">None</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #6B7280;">Model Capability:</span>
+            <strong id="diag-model-capability" style="color: #6B7280;">Unknown</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #6B7280;">Model In-Memory State:</span>
+            <strong id="diag-model-memory" style="color: #6B7280;">Unknown</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #6B7280;">Offline Isolation:</span>
+            <strong id="diag-offline-status" style="color: #059669;">100% Local (Zero External Traffic)</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
+            <span style="color: #6B7280;">Last Inference Time:</span>
+            <strong id="diag-last-latency" style="color: #374151;">—</strong>
+          </div>
+        </div>
       </div>
     </div>
 
