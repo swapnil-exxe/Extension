@@ -1,6 +1,6 @@
 # ⚡ Ad Blocker San — Intelligent AI Quiz Assistant
 
-A high-performance, zero-interference Chrome Extension (Manifest V3) and cloud-ready Node.js Express backend. Designed for seamless practice quiz assistance across **Moodle**, **GeeksforGeeks**, **Scribd**, **Canvas**, **Blackboard**, and generic quiz websites with **multi-key Google Gemini rotation** and **OpenAI ChatGPT** integration.
+A high-performance, zero-interference Chrome Extension (Manifest V3) and local/cloud AI inference engine. Designed for seamless practice quiz assistance across **Moodle**, **GeeksforGeeks**, **Scribd**, **Canvas**, **Blackboard**, and generic quiz websites with **Ollama Local Offline Inference** (zero internet/zero backend required), **multi-key Google Gemini rotation**, and **OpenAI ChatGPT** integration.
 
 The extension operates with **zero visual interference**: the webpage remains completely unmodified — there are no permanent sidebars, floating widgets, or intrusive chat boxes. Interaction occurs exclusively through fast keyboard shortcuts and a tiny, isolated Shadow DOM notification that automatically displays the direct option and answer before cleanly disappearing.
 
@@ -10,13 +10,18 @@ The extension operates with **zero visual interference**: the webpage remains co
 
 ```mermaid
 flowchart TD
-    subgraph Browser["Google Chrome (Client)"]
+    subgraph Browser["Google Chrome (Manifest V3 Client)"]
         User(["User on Quiz Page"])
         ContentScript["Content Script<br>(moodle-content.js)"]
         Notification["Shadow DOM Popup<br>(notification.js)"]
         Snipper["Stealth Snipper<br>(screenshot-handler.js)"]
         ServiceWorker["Background Worker<br>(background.js)"]
+        DNR["declarativeNetRequest<br>(Origin Rewrite Engine)"]
         PopupUI["Popup & Settings UI<br>(popup.js / settings.js)"]
+    end
+
+    subgraph LocalAI["100% Offline Local Pipeline (Zero Node.js Required)"]
+        OllamaLocal["Ollama Service (Port 11434)<br>(gemma3, llama3.2, llava, qwen2-vl)"]
     end
 
     subgraph Cloud["Render Cloud Backend (Node.js & Express)"]
@@ -25,7 +30,7 @@ flowchart TD
         LLMEngine["LLM Engine & Pool Manager<br>(llm-provider.js)"]
     end
 
-    subgraph AIProviders["AI Provider Networks"]
+    subgraph AIProviders["Cloud AI Networks"]
         GeminiPool["Google Gemini 3.1 Flash Lite<br>(4-Key Pool • 6,000 req/day)"]
         OpenAI["OpenAI API<br>(GPT-4o-mini)"]
     end
@@ -33,52 +38,52 @@ flowchart TD
     User -->|"Shift + Z (Auto-Solve)"| ContentScript
     User -->|"Shift + X (Stealth Snip)"| Snipper
     User -->|"Shift + A (Repeat)"| Notification
-    PopupUI -->|"Switch Key / Provider"| ServiceWorker
+    PopupUI -->|"Switch Engine"| ServiceWorker
 
     ContentScript -->|"Question Payload"| ServiceWorker
     Snipper -->|"Base64 Image"| ServiceWorker
-    ServiceWorker -->|"POST /api/answer"| Router
 
+    ServiceWorker -->|"Provider: Ollama Local"| DNR
+    DNR -->|"Bypass 403 (Origin: 127.0.0.1)"| OllamaLocal
+    OllamaLocal -->|"Local JSON Answer"| ServiceWorker
+
+    ServiceWorker -->|"Provider: Gemini / ChatGPT"| Router
     Router --> Cache
     Cache -->|"Cache Miss"| LLMEngine
-    LLMEngine -->|"Key 1..4 (Active Key First)"| GeminiPool
+    LLMEngine -->|"Key 1..4"| GeminiPool
     LLMEngine -->|"ChatGPT Selected"| OpenAI
     GeminiPool -->|"JSON Answer"| LLMEngine
     OpenAI -->|"JSON Answer"| LLMEngine
-
     LLMEngine --> Router
     Router --> ServiceWorker
+
     ServiceWorker --> ContentScript
-    ContentScript -->|"Render Direct Answer"| Notification
+    ContentScript -->|"Single Active Box"| Notification
 ```
 
 ---
 
-## 🔄 End-to-End Pipeline & Workflows
+## 🔄 End-to-End Shortcuts & Workflows
 
 ### 1. Shift + Z — Smart Automatic Question Solving
 ```
-User Cursor / Selection
+User Cursor / Highlight
    │
    ▼
 moodle-content.js ──────► 1. Detects question container (.que, .QuizQuestionCard, or active viewport)
-   │                      2. Extracts question text, math, code & options (A-F, True/False)
-   │                      3. Detects image-only questions and converts <img>/<svg>/<canvas> to base64
+   │                      2. Extracts question text, math notation, code & options (A-F, True/False)
+   │                      3. Normalizes option letters (A, B, C, D) for strict LLM alignment
    ▼
-background.js ──────────► Attaches active provider ('gemini_1'..'gemini_4' or 'chatgpt') & API key
+background.js ──────────► Routes directly to Ollama Local (Port 11434) or Gemini Cloud
    │
    ▼
-Render Cloud Backend ───► Computes SHA-256 cache key (question + options + provider + model + apiKey)
+AI Inference ───────────► Evaluates question with subject-specific reasoning rules (DBMS, OS, CN, DAA, SE)
    │
-   ├─► Cache Hit  ──────► Returns cached JSON in ~10ms
-   │
-   └─► Cache Miss ──────► Calls Google Gemini 3.1 Flash Lite (~670ms) / OpenAI (gpt-4o-mini)
-                            │
-                            ▼
-notification.js ◄─────── Displays corner answer badge (e.g. "B — Cluster Sampling")
+   ▼
+notification.js ◄─────── Displays corner answer badge (e.g. "C — Product Owner")
 ```
 
-### 2. Shift + X — Stealth Screen Snipping & Vision AI
+### 2. Shift + X — Stealth Screen Snipping & Native Multimodal Vision AI
 ```
 User presses Shift + X
    │
@@ -87,17 +92,17 @@ screenshot-handler.js ──► 1. Activates 100% transparent overlay (ZERO scre
    │                      2. No instruction banners or hint pills (completely stealthy)
    │                      3. Crosshair cursor lets user drag-select question area
    ▼
-Area selected ──────────► 1. In-memory canvas crops selection & compresses to JPEG
+Area selected ──────────► 1. High-DPI canvas crops selection & compresses to high-res JPEG (max 1600px)
    │                      2. Corner popup immediately shows small status: "Evaluating..."
    ▼
-background.js ──────────► Dispatches base64 image payload to /api/answer
+background.js ──────────► Dispatches base64 image payload directly to Vision AI
    │
    ▼
-Gemini Vision Engine ───► Evaluates question, formulas, and diagrams directly from pixels
-   │
+Vision Neural Network ──► Evaluates question, formulas, circuits, and diagrams directly from pixels
+   │                      (NO clumsy OCR tools — reads directly via Gemini Vision, GPT-4o, or Gemma3/LLaVA)
    ▼
-notification.js ◄─────── Words smoothly change in-place in that exact same small box:
-                          "Evaluating..."  ──►  "c — O(n)" (Direct option and answer only)
+notification.js ◄─────── Words smoothly change in-place in that exact same box:
+                          "Evaluating..."  ──►  "C — Product Owner" (Direct option and answer only)
 ```
 
 ### 3. Shift + A — Instant Last Answer Recall
@@ -105,22 +110,67 @@ notification.js ◄─────── Words smoothly change in-place in that 
 User presses Shift + A
    │
    ▼
-moodle-content.js ──────► Reads lastAnswer from in-memory cache (0ms network cost)
+moodle-content.js ──────► Reads lastRecordedAnswer from chrome.storage.local (0ms network cost)
    │
    ▼
-notification.js ◄─────── Re-displays previous answer badge instantly
+notification.js ◄─────── Re-displays previous answer badge instantly across frames and tabs
 ```
 
 ---
 
-## 🔑 Multi-Key Pool & Automatic Failover Engine
+## 🦙 100% Offline Ollama Pipeline (Zero Node.js Required)
 
-The backend features an intelligent **4-key Gemini pool** with round-robin load distribution, independent per-model quota management, and automatic 429 quota failover:
+When **Ollama Local (Offline)** is selected, the extension connects **directly from Chrome to Ollama (`http://127.0.0.1:11434`)**:
+
+* **Zero External Dependencies:** No Node.js, Express, npm, or terminal backend required. Runs straight out of the Chrome browser.
+* **100% Private & Air-Gapped:** Question text, diagrams, and answers never leave your computer.
+* **Automatic 403 Forbidden / CORS Bypass:** Ollama rejects non-localhost Origin headers. The extension uses Chrome Manifest V3 `declarativeNetRequest` to rewrite the browser's outgoing `Origin` to `http://127.0.0.1:11434`, ensuring seamless connectivity.
+* **Dynamic Model Detection:** Querying `/api/tags` instantly lists all locally downloaded models with their parameter sizes and capability badges (`[Text]`, `[Vision]`, `[Embedding]`).
+* **Non-Completion Filtering:** Non-generative embedding models (e.g. `nomic-embed-text`, `bge-m3`) are automatically filtered out from generation options.
+
+---
+
+## 🖥️ Cross-Platform 1-Click Launchers
+
+To start Ollama with extension access on any operating system, 1-click launchers are included in the repository root:
+
+| Operating System | Launcher File | How to Use |
+| :--- | :--- | :--- |
+| **Windows** | [`start-ollama.bat`](file:///Users/swapnil/Documents/extention/start-ollama.bat) | Double-click the file. It launches Ollama with `OLLAMA_ORIGINS=*`. |
+| **macOS** | [`start-ollama.command`](file:///Users/swapnil/Documents/extention/start-ollama.command) | Double-click the file (or launch the native Ollama macOS app). |
+| **Linux (College Labs)** | [`start-ollama.sh`](file:///Users/swapnil/Documents/extention/start-ollama.sh) | Run `./start-ollama.sh` in terminal, or simply `ollama serve`. |
+
+---
+
+## 🐧 Linux & College Lab Deployment
+
+In college computer labs where most machines run **Linux** (Ubuntu, Debian, Fedora, Arch, CentOS):
+
+1. **Zero Root / Admin Privileges Needed:** Chrome extensions install at the user level (`/home/student/...`). You do not need `sudo`.
+2. **X11 & Wayland Compatible:** Screen capture and shortcuts hook directly into the Chromium event loop, working identically across GNOME, KDE, and XFCE.
+3. **Pre-Installed Models Auto-Detection:** If Ollama was installed days or weeks ago, opening the extension Settings immediately surfaces all installed local models.
+4. **No Terminal Required:** Once loaded into Chrome, everything works via `Shift + Z`, `Shift + X`, and `Shift + A`.
+
+---
+
+## 🔔 Centralized Notification Manager (No Overlapping)
+
+* **Physical Single-Element Host:** Only one notification box can ever exist in the DOM (`#moodle-quick-notify-host`).
+* **Multi-Frame Delegation:** Child iframes (`window !== window.top`) delegate notification requests to `window.top` via `postMessage`. Child frames never inject DOM elements, preventing duplicate or overlapping boxes.
+* **In-Place Morphing:** New status updates and answers replace previous content smoothly in-place with zero layout shifting.
+* **Click to Dismiss:** Click anywhere on the white badge to immediately dismiss it. Long answers feature progressive 3-dot expansion (`···`).
+
+---
+
+## 🔑 Multi-Key Pool & Cloud Failover Engine
+
+For cloud mode, the backend includes an intelligent **4-key Gemini pool** with round-robin load distribution and automatic 429 quota failover:
 
 ```mermaid
 flowchart LR
-    Start([User Request]) --> Primary{"User-Selected Key"}
-    Primary -->|Key 1| K1["Key 1 (EIbw)"]
+    Start([User Request]) --> Primary{"Active Provider"}
+    Primary -->|Ollama Local| Local["Ollama (127.0.0.1:11434 • Offline)"]
+    Primary -->|Gemini Pool| K1["Key 1 (EIbw)"]
     Primary -->|Key 2| K2["Key 2 (zxg)"]
     Primary -->|Key 3| K3["Key 3 (3vw)"]
     Primary -->|Key 4| K4["Key 4 (kUg)"]
@@ -131,6 +181,7 @@ flowchart LR
     K3 -->|200 OK| Done
     K4 -->|200 OK| Done
     GPT -->|200 OK| Done
+    Local -->|200 OK| Done
 
     K1 -.->|429 Rate Limit| K2
     K2 -.->|429 Rate Limit| K3
@@ -138,12 +189,9 @@ flowchart LR
     K4 -.->|All Keys Rate-Limited| GPT
 ```
 
-### Key Highlights:
-* **Primary High-Speed Model:** `gemini-3.1-flash-lite` with ~670ms latency.
-* **Per-Model Quota Failover:** Google AI Studio free tier limits (15 RPM) are per-model. If one model hits rate limits, the engine automatically cascades to candidate models (`gemini-3.1-flash-lite-preview`, `gemini-flash-lite-latest`, `gemini-3.5-flash`).
-* **Key Recovery TTL:** Exhausted keys automatically recover after a 60-second cooldown rather than being permanently locked out.
-* **Resilient 3-Tier JSON Parser:** Robust JSON repair handles markdown fences, unescaped math symbols, and regex fallback for non-standard LLM output.
+* **Primary High-Speed Model:** `gemini-3.1-flash-lite` (~670ms latency).
 * **Daily Free Capacity:** 4 keys × 1,500 requests/day = **6,000 free questions every 24 hours**.
+* **Zero Silent Cloud Leakage:** When Ollama Local is active, requests are **never** routed to cloud providers.
 
 ---
 
@@ -153,20 +201,10 @@ flowchart LR
 | :--- | :--- | :--- |
 | <kbd>Shift + Z</kbd> | **Smart Solve** | Extracts active text or image question + options and displays answer badge. |
 | <kbd>Shift + X</kbd> | **Stealth Snip** | Drag-select any area with 100% normal screen brightness. Direct answer displays in corner. |
-| <kbd>Shift + A</kbd> | **Repeat Answer** | Re-displays the last answer from cache without making any API request. |
+| <kbd>Shift + A</kbd> | **Repeat Answer** | Re-displays the last answer from cache/storage without making any API request. |
 | <kbd>Esc</kbd> | **Cancel Snip** | Cancels the screen selection immediately. |
 
 > **Typing Safety**: Shortcuts are automatically disabled while typing in `<input>`, `<textarea>`, or `contenteditable` elements to prevent accidental triggers.
-
----
-
-## 🎨 UI & Design Principles
-
-* **Pure White Theme**: Clean minimalist styling using `#FFFFFF` background, `#000000` text, and `#E5E5E5` borders.
-* **Zero Disruption**: Webpages are never altered; no floating sidebars or layout shifts.
-* **Stealth Selection**: Screen brightness remains completely normal when snipping; no dark backdrop, no dimming, and no instruction banner.
-* **Isolated Shadow DOM**: Notifications use encapsulated Shadow DOM styling to avoid CSS conflicts with school or quiz stylesheets.
-* **In-Place Word Updates**: Small corner badge displays `Evaluating...` and smoothly changes words in-place to the direct option and answer (e.g. `c — O(n)`).
 
 ---
 
@@ -175,130 +213,84 @@ flowchart LR
 ### Chrome Extension (`/extension`)
 | File | Purpose |
 | :--- | :--- |
-| [`manifest.json`](file:///Users/swapnil/Documents/extention/extension/manifest.json) | Chrome Manifest V3 configuration, permissions (`activeTab`, `storage`, `scripting`), host permissions, and keyboard shortcut registrations. |
-| [`background.js`](file:///Users/swapnil/Documents/extention/extension/background.js) | Service worker managing API requests, backend routing, active provider selection (`gemini_1`..`gemini_4` / `chatgpt`), and tab screenshot capture (`chrome.tabs.captureVisibleTab`). |
-| [`moodle-content.js`](file:///Users/swapnil/Documents/extention/extension/moodle-content.js) | Core content script running on quiz pages. Detects active questions, extracts text/options, converts question images to base64, and coordinates keyboard shortcuts. |
-| [`screenshot-handler.js`](file:///Users/swapnil/Documents/extention/extension/screenshot-handler.js) | Interactive stealth snipping tool. Provides transparent selection rectangle (zero screen dimming) and crops selected area in-memory via HTML5 Canvas. |
-| [`notification.js`](file:///Users/swapnil/Documents/extention/extension/notification.js) | Shadow DOM corner notification badge. Handles clean pure-white UI, status updates (`Evaluating...`), word changes to answers, and progressive 3-dot expansion for long text. |
-| [`popup.html`](file:///Users/swapnil/Documents/extention/extension/popup.html) / [`popup.js`](file:///Users/swapnil/Documents/extention/extension/popup.js) | Clean popup interface showing active key status, connection indicators, and quick provider switching. |
-| [`settings.html`](file:///Users/swapnil/Documents/extention/extension/settings.html) / [`settings.js`](file:///Users/swapnil/Documents/extention/extension/settings.js) | Settings dashboard allowing customization of notification corner position, display duration, and custom API keys. |
-| [`styles.css`](file:///Users/swapnil/Documents/extention/extension/styles.css) | Shared extension UI styles adhering to the pure white theme. |
-| [`icons/`](file:///Users/swapnil/Documents/extention/extension/icons) | Extension icons in standard Chrome sizes (16px, 32px, 48px, 128px). |
+| [`manifest.json`](file:///Users/swapnil/Documents/extention/extension/manifest.json) | Chrome Manifest V3 configuration, permissions (`activeTab`, `storage`, `scripting`, `declarativeNetRequest`), host permissions (`<all_urls>`), and keyboard commands. |
+| [`background.js`](file:///Users/swapnil/Documents/extention/extension/background.js) | Background service worker. Direct Ollama engine, `declarativeNetRequest` Origin-rewrite rules, Gemini key failover, and tab screenshot capture. |
+| [`moodle-content.js`](file:///Users/swapnil/Documents/extention/extension/moodle-content.js) | Core quiz content script. Extracts question text/options, normalizes option letters (`A-F`), converts images to base64, coordinates shortcuts with 450ms debounce. |
+| [`screenshot-handler.js`](file:///Users/swapnil/Documents/extention/extension/screenshot-handler.js) | Interactive stealth snipping tool. Transparent crosshair selection, devicePixelRatio coordinate normalization, in-memory HTML5 Canvas crop, and JPEG compression. |
+| [`notification.js`](file:///Users/swapnil/Documents/extention/extension/notification.js) | Centralized Shadow DOM notification manager. Strictly one active notification on screen, top-frame delegation, in-place word morphing, and white minimalist theme. |
+| [`popup.html`](file:///Users/swapnil/Documents/extention/extension/popup.html) / [`popup.js`](file:///Users/swapnil/Documents/extention/extension/popup.js) | Clean popup interface with active model tags, connection status indicators, and 1-click provider switching. |
+| [`settings.html`](file:///Users/swapnil/Documents/extention/extension/settings.html) / [`settings.js`](file:///Users/swapnil/Documents/extention/extension/settings.js) | Settings dashboard for Ollama URL configuration, model refresh, capability inspection, and notification position customization. |
+| [`styles.css`](file:///Users/swapnil/Documents/extention/extension/styles.css) | Shared extension UI styles adhering to the pure white theme (`#FFFFFF`). |
 
 ### Backend Service (`/backend`)
 | File | Purpose |
 | :--- | :--- |
-| [`server.js`](file:///Users/swapnil/Documents/extention/backend/server.js) | Express entry point configured with Helmet security headers, CORS origin verification, bound to `127.0.0.1`. |
-| [`routes/answer.js`](file:///Users/swapnil/Documents/extention/backend/routes/answer.js) | Primary API route (`POST /api/answer`). Implements SHA-256 LRU caching per API key/provider and routes questions to the LLM engine. |
-| [`routes/ollama.js`](file:///Users/swapnil/Documents/extention/backend/routes/ollama.js) | Local Ollama API routes (`GET /api/ollama/status`, `GET /api/ollama/models`, `POST /api/solve`). |
-| [`routes/auth.js`](file:///Users/swapnil/Documents/extention/backend/routes/auth.js) | Authentication and provider status endpoints (`GET /api/auth/status`, `POST /api/auth/select`, OAuth flows). |
-| [`services/ollama-service.js`](file:///Users/swapnil/Documents/extention/backend/services/ollama-service.js) | Dynamic Ollama model detection, capability detection (Vision/Text/Unknown), model validation, and generation. |
-| [`services/llm-provider.js`](file:///Users/swapnil/Documents/extention/backend/services/llm-provider.js) | Multi-key Gemini pool manager, OpenAI integration, Ollama routing, vision capability verification, and resilient 3-tier JSON parser. |
-| [`validation/answer-schema.js`](file:///Users/swapnil/Documents/extention/backend/validation/answer-schema.js) | Strict Zod validation schemas validating question types, options, base64 image strings, Ollama parameters, and LLM output format. |
-| [`tests/ollama.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/ollama.test.js) | Comprehensive Ollama unit & integration tests covering model detection, dynamic selection, vision capability, and error handling. |
-| [`tests/fixtures-adapter.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/fixtures-adapter.test.js) | DOM extraction tests across Moodle and custom quiz fixtures, verifying single choice, math formulas, code snippets, image-based questions, and stealth Shift+X overlay. |
-| [`tests/server.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/server.test.js) | API route integration tests covering caching, rate limiting, and response payloads. |
-| [`tests/auth.test.js`](file:///Users/swapnil/Documents/extention/backend/tests/auth.test.js) | Provider switching, PKCE flow validation, and CSRF protection tests. |
+| [`server.js`](file:///Users/swapnil/Documents/extention/backend/server.js) | Optional Express server with Helmet security headers and CORS origin verification bound to `127.0.0.1`. |
+| [`routes/answer.js`](file:///Users/swapnil/Documents/extention/backend/routes/answer.js) | Primary API route (`POST /api/answer`). SHA-256 caching per question/key and LLM engine routing. |
+| [`routes/ollama.js`](file:///Users/swapnil/Documents/extention/backend/routes/ollama.js) | Local Ollama endpoints (`GET /api/ollama/status`, `GET /api/ollama/models`, `POST /api/solve`). |
+| [`services/ollama-service.js`](file:///Users/swapnil/Documents/extention/backend/services/ollama-service.js) | Offline Ollama pipeline, dynamic capability detection, multi-strategy option matching, and temperature 0.1 inference. |
+| [`services/subject-expert.js`](file:///Users/swapnil/Documents/extention/backend/services/subject-expert.js) | Academic subject classifier (DBMS, OS, CN, DAA, TOC, AISC, SE, Math, Programming) injecting targeted reasoning guidelines. |
+| [`services/llm-provider.js`](file:///Users/swapnil/Documents/extention/backend/services/llm-provider.js) | Multi-key Gemini pool manager, OpenAI integration, vision capability verification, and resilient 3-tier JSON parser. |
+| [`validation/answer-schema.js`](file:///Users/swapnil/Documents/extention/backend/validation/answer-schema.js) | Strict Zod validation schemas validating question types, options, base64 image strings, and LLM output format. |
 
 ---
 
-## 🐧 Ubuntu Linux & Ollama Local AI Setup
+## 🧪 Automated Testing & Verification Suite
 
-This project supports **100% private, offline inference** using [Ollama](https://ollama.com) on Ubuntu Linux (and other OS):
-
-### 1. Install Ollama on Ubuntu
-Open your Ubuntu Terminal and run the official installation script:
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-*(On modern systemd Linux distributions, Ollama installs and automatically starts as a background service on `http://127.0.0.1:11434`.)*
-
-### 2. Download (Pull) AI Models
-Initial model downloads require internet access, but after downloading, **inference runs 100% locally and completely offline**:
-
-```bash
-# High-speed text model:
-ollama pull gemma3:4b
-
-# Or Llama 3.2:
-ollama pull llama3.2:latest
-
-# Vision-capable model (for diagram & screenshot questions):
-ollama pull llama3.2-vision:11b
-```
-
-### 3. Verify Installed Models
-```bash
-ollama list
-```
-
-### 4. Test Model in Terminal (Optional)
-```bash
-ollama run gemma3:4b
-```
-
-### 5. Start the Local Backend
-In the project directory on your Ubuntu machine:
-```bash
-cd backend
-npm install
-HOST=127.0.0.1 PORT=3000 npm start
-```
-The backend binds securely to `http://127.0.0.1:3000`.
-
-### 6. Connect Chrome Extension
-1. Open the extension **Settings ⚙** page (`chrome-extension://.../settings.html`).
-2. Under **AI Provider Engine**, select **🦙 Ollama Local AI (Ubuntu / Localhost)**.
-3. Click **Check Ollama Status** to confirm connectivity.
-4. Click **🔄 Refresh Models**: all models installed in your terminal are automatically listed with their sizes, families, and capability tags (`[Text]`, `[Vision]`, `[Unknown]`).
-5. Select your desired model (e.g. `gemma3:4b`), click **Save Settings**, and you're ready to solve questions completely locally!
-
-> **Dynamic Model Management**: Whenever you pull or remove a model in Ubuntu terminal (`ollama pull` or `ollama rm`), simply click **Refresh Models** in the extension to instantly see the updated list without changing any source code!
-
----
-
----
-
-## 🚀 Installation & Quick Start
-
-### 1. Load Extension into Chrome
-1. Open Google Chrome and navigate to:
-   ```text
-   chrome://extensions
-   ```
-2. Turn **ON** the **Developer mode** toggle in the top-right corner.
-3. Click **Load unpacked** in the top-left corner.
-4. Select the **`extension`** folder from this project.
-5. The extension is now active and ready to assist!
-
----
-
-### 2. Using on Any Quiz Site
-- **Text Questions:** Click near or hover over any question and press **Shift + Z**.
-- **Diagrams / Equations / Scribd / PDF:** Press **Shift + X**, drag a box around the question area, and release.
-- **Repeat:** Press **Shift + A** anytime to view the last answer again.
-
----
-
-## 🧪 Automated Testing & Benchmarking Suite
-
-The project includes an automated test suite with **66 tests** covering DOM adapters, multimodal image decoding, stealth overlay, subject-specific academic reasoning, 12-question offline benchmark suite, Ollama local model detection, dynamic model selection, capability detection, caching, and rate limiting:
+The repository includes a comprehensive automated test suite with **70 tests (100% passing)**:
 
 ```bash
 npm test
 ```
 
 ```text
+> moodle-ai-assistant-backend@1.0.1 test
+> node --test tests/*.test.js
+
+✔ GET /api/auth/status returns initial providers and active selection
+✔ POST /api/auth/start generates valid Google Gemini OAuth flow with PKCE
 ✔ Subject Expert: Correctly classifies all academic domains (DBMS, OS, CN, DAA, TOC, AISC, SE, Math, Programming)
 ✔ Benchmark Suite: Offline Ollama Pipeline Evaluates 12 Benchmark Questions
-✔ Benchmark Suite: Unsolvable/empty option reconciliation gracefully avoids error
+✔ Fixture 1: Single-Choice Question extraction
+✔ Fixture 5: Formatted Text and Math preservation
+✔ Shortcut 1 (Shift+Z): solveCurrentQuestion extracts text and stores lastAnswer
+✔ Shortcut 2 (Shift+X): solveQuestionScreenshot captures tab and sends vision payload
+✔ Shortcut 3 (Shift+A): showLastAnswerAgain re-displays previous answer without new API request
+✔ MoodleQuickNotification: renders answer cleanly and handles positions
+✔ Notification Manager: Strictly 1 host and 1 box in DOM, replaces in-place without overlapping
+✔ Notification Manager: Child frame does NOT inject DOM and delegates to window.top
+✔ Capability Detection: Text models identify as Text
+✔ Capability Detection: Vision models identify as Vision
+✔ Capability Detection: Embedding models identify as Embedding
 ✔ Model Detection: Multiple installed models with mixed capabilities
-✔ AI Generation: Text question evaluation via POST /api/solve and unified POST /api/answer
-✔ AI Generation: Vision model accepts image and solves correctly
-✔ Shortcuts 1-3: Shift+Z, Shift+X, Shift+A handlers
+✔ Model Selection: POST /api/solve rejects missing model parameter
+✔ AI Generation: Text question evaluation via POST /api/solve
+✔ Manifest: Ensures all_frames is enabled for iframe quiz compatibility
+✔ POST /api/answer succeeds with single_choice question
+✔ Cache separates different providers and models for same question
 
-ℹ tests 66 | ℹ pass 66 | ℹ fail 0 (100% Passing)
+ℹ tests 70 | ℹ pass 70 | ℹ fail 0 (100% Passing)
 ```
+
+---
+
+## 🚀 Quick Start on Any PC (Windows, Mac, Linux)
+
+### 1. Start Ollama
+* **Windows:** Double-click [`start-ollama.bat`](file:///Users/swapnil/Documents/extention/start-ollama.bat).
+* **macOS:** Double-click [`start-ollama.command`](file:///Users/swapnil/Documents/extention/start-ollama.command).
+* **Linux:** Run `./start-ollama.sh` (or `ollama serve`).
+
+### 2. Load Extension in Chrome
+1. Open Google Chrome and go to `chrome://extensions`.
+2. Enable **Developer mode** (top-right toggle).
+3. Click **Load unpacked** and select the [`extension`](file:///Users/swapnil/Documents/extention/extension) folder (or drag in [`extension.zip`](file:///Users/swapnil/Documents/extention/extension.zip)).
+
+### 3. Solve Questions
+* Open any quiz, Moodle test, or question page.
+* Press **`Shift + Z`** to auto-solve the active or highlighted question.
+* Press **`Shift + X`** to snip any diagram, circuit, or equation.
+* Press **`Shift + A`** to recall the last answer.
 
 ---
 
