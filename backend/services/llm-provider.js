@@ -268,12 +268,11 @@ async function callGemini(payload, config = {}) {
   }
 
   const candidateModels = Array.from(new Set([
-    'gemini-3.1-flash-lite',
-    'gemini-3.1-flash-lite-preview',
-    'gemini-flash-lite-latest',
     config.model,
     process.env.GEMINI_MODEL,
+    'gemini-3.5-flash-lite',
     'gemini-3.5-flash',
+    'gemini-flash-lite-latest',
     'gemini-3.6-flash',
     'gemini-flash-latest'
   ].filter(Boolean)));
