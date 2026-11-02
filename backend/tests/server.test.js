@@ -220,16 +220,16 @@ test('Cache separates different providers and models for same question', async (
   const res1 = await fetch(`${baseUrl}/api/answer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: q, options: opts, provider: 'gemini', model: 'gemini-2.0-flash-lite' })
+    body: JSON.stringify({ question: q, options: opts, provider: 'mock', model: 'model-alpha' })
   });
   const data1 = await res1.json();
   assert.equal(data1.cached, false);
 
-  // Request 2: Same question, Different Provider (must NOT return stale cache from provider A)
+  // Request 2: Same question, Different Provider/Model (must NOT return stale cache from provider A)
   const res2 = await fetch(`${baseUrl}/api/answer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: q, options: opts, provider: 'chatgpt', model: 'gpt-4o-mini' })
+    body: JSON.stringify({ question: q, options: opts, provider: 'mock', model: 'model-beta' })
   });
   const data2 = await res2.json();
   assert.equal(data2.cached, false);

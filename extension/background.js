@@ -333,14 +333,8 @@ async function handleAnalyzeQuestion(payload) {
   let timeoutMs = 25000;
   let isLocalOllama = false;
 
-  const GEMINI_KEYS = {
-    gemini_1: 'AQ.Ab8RN6KFANrgYQ9jNdxrKrvFgSTK29zX5LlklGYKiJ_NMQEIbw',
-    gemini_2: 'AQ.Ab8RN6L5SzwMkdACJLrfDhTITMLagzjNqIN4DLR_-lN-fBjzxg',
-    gemini_3: 'AQ.Ab8RN6JLyJ-DRRQkkQ8hsYe_X5NRUdNsT_sQtv7XjAoI2Qn3vw',
-    gemini_4: 'AQ.Ab8RN6Kr25hFpdJ7q7Q4PDOZV_cERl0ARAJdr0v7KMMED3fkUg'
-  };
-
-  const CHATGPT_KEY = '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';
+  // Secure cloud routing: Keys are managed safely on Render server environment variables
+  // or user-configured custom keys. No secrets are hardcoded in client code.
 
   if (selectedProvider === 'ollama') {
     isLocalOllama = true;
@@ -362,15 +356,18 @@ async function handleAnalyzeQuestion(payload) {
     const cleanUrl = backendUrl.replace(/\/+$/, '');
     targetEndpoint = `${cleanUrl}/api/answer`;
     payload.provider = 'gemini';
-    if (GEMINI_KEYS[selectedProvider]) {
-      payload.apiKey = GEMINI_KEYS[selectedProvider];
+    payload.keySlot = selectedProvider;
+    if (storage.userGeminiKey) {
+      payload.apiKey = storage.userGeminiKey;
     }
   } else if (selectedProvider === 'chatgpt' || selectedProvider === 'openai') {
     const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
     const cleanUrl = backendUrl.replace(/\/+$/, '');
     targetEndpoint = `${cleanUrl}/api/answer`;
     payload.provider = 'chatgpt';
-    payload.apiKey = CHATGPT_KEY;
+    if (storage.userOpenAIKey) {
+      payload.apiKey = storage.userOpenAIKey;
+    }
   } else if (selectedProvider.startsWith('custom_')) {
     const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
     const cleanUrl = backendUrl.replace(/\/+$/, '');
@@ -571,38 +568,6 @@ function extractJSON(text) {
       return null;
     }
   }
-}
-
-/**
- * Cloud fallback helper: queries Gemini Cloud via Render backend with 4 failover keys
- */
-async function callCloudGeminiFallback(payload, keys) {
-  const cleanPayload = { ...payload };
-  delete cleanPayload.ollamaUrl;
-  delete cleanPayload.model;
-  cleanPayload.provider = 'gemini';
-
-  const keyList = Object.values(keys);
-  for (const key of keyList) {
-    cleanPayload.apiKey = key;
-    try {
-      const res = await fetch('https://extension-w1ac.onrender.com/api/answer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cleanPayload),
-        signal: AbortSignal.timeout(12000)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && (data.answer || data.option)) {
-          return data;
-        }
-      }
-    } catch (_) {
-      // Failover to next key
-    }
-  }
-  return null;
 }
 
 async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434', modelName) {
