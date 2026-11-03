@@ -843,4 +843,99 @@ test('Negative Question Handling: preserves negative qualifier in extracted prom
   assert.equal(data.options.length, 4);
 });
 
+test('Shift + Z on ordinary text MCQ with broken/inaccessible image solves question using extracted text', async () => {
+  const html = `
+    <div class="que multichoice" id="q_text_with_broken_img">
+      <div class="info">
+        <span class="no">1</span>
+        <span class="state">Not yet answered</span>
+      </div>
+      <div class="formulation">
+        <div class="qtext">
+          <p>Which sorting algorithm has O(n log n) average time complexity?</p>
+          <img src="https://example.com/broken_decorative_banner.png" alt="Decorative banner" />
+        </div>
+        <div class="answer">
+          <label><input type="radio" name="q_sort" value="1"> A. Bubble Sort</label>
+          <label><input type="radio" name="q_sort" value="2"> B. Quick Sort</label>
+          <label><input type="radio" name="q_sort" value="3"> C. Insertion Sort</label>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const dom = setupDOM(html);
+  const { MoodleAdapter } = dom.window;
+
+  await MoodleAdapter.solveCurrentQuestion();
+
+  const host = dom.window.document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Notification host should be present');
+  const box = host.shadowRoot.getElementById('notify-box');
+
+  // Must NOT display "Could not decode question image" error
+  assert.ok(!box.textContent.includes('Could not decode question image'), 'Should NOT abort on text MCQ with broken image');
+
+  // Must dispatch ANALYZE_QUESTION with the question text
+  const analyzeCall = dom.window.sentMessages.find(m => m.action === 'ANALYZE_QUESTION');
+  assert.ok(analyzeCall, 'Should dispatch ANALYZE_QUESTION using extracted text');
+  assert.ok(analyzeCall.payload.question.includes('Which sorting algorithm has O(n log n) average time complexity?'));
+  assert.equal(analyzeCall.payload.options.length, 3);
+});
+
+test('Selection overlay styling: subtle border with zero blue fill', async () => {
+  const dom = setupDOM('<div></div>');
+  const { document, MoodleScreenshotHandler } = dom.window;
+
+  const promise = MoodleScreenshotHandler.promptUserSelectionArea();
+  const overlay = document.getElementById('moodle-snipping-overlay');
+  assert.ok(overlay, 'Snipping overlay must exist');
+
+  const box = overlay.querySelector('div');
+  assert.ok(box, 'Selection box must exist inside overlay');
+  assert.ok(!box.style.cssText.includes('rgba(37, 99, 235'), 'Box must not have blue background fill');
+  assert.ok(!box.style.cssText.includes('#2563EB'), 'Box border must not be bright blue #2563EB');
+  assert.ok(box.style.cssText.includes('border: 1.5px solid'), 'Box must have subtle minimal 1.5px border');
+
+  // Clean up
+  dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await promise;
+});
+
+test('Custom card-based questions: extracts card options and text without radio inputs', () => {
+  const cardHtml = `
+    <div class="quizCard" id="card_question_1">
+      <div class="questionHeader">
+        <h3 class="questionText">Which design pattern ensures a class has only one instance?</h3>
+      </div>
+      <div class="optionsGrid">
+        <div class="optionCard" role="button">
+          <span class="cardLetter">A</span>
+          <span class="cardText">Factory Pattern</span>
+        </div>
+        <div class="optionCard" role="button">
+          <span class="cardLetter">B</span>
+          <span class="cardText">Singleton Pattern</span>
+        </div>
+        <div class="optionCard" role="button">
+          <span class="cardLetter">C</span>
+          <span class="cardText">Observer Pattern</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const dom = setupDOM(cardHtml);
+  const { MoodleAdapter } = dom.window;
+
+  const containers = MoodleAdapter.getQuestionContainers();
+  assert.equal(containers.length, 1, 'Should detect custom card container');
+
+  const data = MoodleAdapter.extractQuestionData(containers[0]);
+  assert.ok(data.question.includes('Which design pattern ensures a class has only one instance?'));
+  assert.equal(data.options.length, 3, 'Should extract all 3 card options');
+  assert.ok(data.options.some(o => o.text.includes('Singleton Pattern')));
+});
+
+
 

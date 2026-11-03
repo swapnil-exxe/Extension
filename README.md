@@ -253,7 +253,7 @@ flowchart LR
 
 ## 🧪 Automated Testing & Verification Suite
 
-The repository includes a comprehensive automated test suite with **72 tests (100% passing)**:
+The repository includes a comprehensive automated test suite with **75 tests (100% passing)**:
 
 ```bash
 npm test
@@ -285,6 +285,9 @@ npm test
 ✔ Notification Manager: Child frame does NOT inject DOM and delegates to window.top
 ✔ Moodle Matching Question: extracts matching table rows and select dropdown options
 ✔ Negative Question Handling: preserves negative qualifier in extracted prompt
+✔ Shift + Z on ordinary text MCQ with broken/inaccessible image solves question using extracted text
+✔ Selection overlay styling: subtle border with zero blue fill
+✔ Custom card-based questions: extracts card options and text without radio inputs
 ✔ Shift + X preserves normal page brightness with transparent overlay and updates answer popup in-place
 ✔ Capability Detection: Text models identify as Text
 ✔ Capability Detection: Vision models identify as Vision
@@ -295,7 +298,7 @@ npm test
 ✔ POST /api/answer succeeds with single_choice question
 ✔ Cache separates different providers and models for same question
 
-ℹ tests 72 | ℹ pass 72 | ℹ fail 0 (100% Passing)
+ℹ tests 75 | ℹ pass 75 | ℹ fail 0 (100% Passing)
 ```
 
 ---

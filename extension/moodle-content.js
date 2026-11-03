@@ -269,17 +269,28 @@
     if (el.matches('[class*="optionItem" i], [class*="option-item" i], [class*="optionsList" i], [class*="options-list" i], [class*="optionLabel" i], [class*="optionInput" i], [class*="optionContainer" i]')) return false;
     if (el.matches('[class*="questionText" i], [class*="qtext" i], [class*="prompt" i], [class*="header" i], [class*="footer" i]')) return false;
 
-    // Must have radio/checkbox inputs or option items
+    // 1. Must have radio/checkbox inputs
     const inputs = el.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
     if (inputs.length >= 2) return true;
 
-    const optionEls = el.querySelectorAll('[class*="optionContainer" i], [class*="option-item" i], [class*="optionItem" i], [class*="choice" i], [class*="answer" i], li');
+    // 2. Matching questions with select dropdowns
+    const selects = el.querySelectorAll('select, [role="listbox"]');
+    if (selects.length >= 1) return true;
+
+    // 3. Text inputs for numerical or short answer questions
+    const textInputs = el.querySelectorAll('input[type="text"], input[type="number"], textarea');
+    if (textInputs.length >= 1 && (el.classList.contains('numerical') || el.classList.contains('shortanswer') || el.querySelector('.qtext, .formulation'))) {
+      return true;
+    }
+
+    // 4. Custom card-based options / answer choices
+    const optionEls = el.querySelectorAll('[class*="optionContainer" i], [class*="option-item" i], [class*="optionItem" i], [class*="optionCard" i], [class*="option-card" i], [class*="choice" i], [class*="answer" i], li');
     const textOptions = Array.from(optionEls).filter(o => o.textContent.trim().length > 0 && o.textContent.trim().length < 300);
     if (textOptions.length >= 2) return true;
 
-    // Has question prompt and option text
+    // 5. Question prompt and option text in raw markup
     const text = el.textContent.trim();
-    if (text.length >= 20 && (/^(?:(?:\([A-Da-d]\))|[A-Da-d][\.\:\)])/m.test(text))) {
+    if (text.length >= 20 && (/^(?:(?:\([A-Da-d]\))|[A-Da-d][\.\:\)])/m.test(text) || /\b(True|False)\b/i.test(text))) {
       return true;
     }
 
@@ -539,11 +550,19 @@
       return false;
     }
 
-    // Exclude icons, avatars, flags, decorative images
+    // Exclude icons, avatars, flags, decorative images, buttons, and navigation
     if (el.classList.contains('icon') || el.classList.contains('userpicture') || el.classList.contains('activityicon') || el.classList.contains('smallicon')) {
       return false;
     }
     if (el.getAttribute('role') === 'presentation' || el.getAttribute('aria-hidden') === 'true') {
+      return false;
+    }
+    if (el.closest('button, a, [role="button"], [class*="btn" i], nav, header, footer, .info, .state, .grade')) {
+      return false;
+    }
+
+    // Exclude MathJax / KaTeX / TeX formulas (formulas are cleanly captured as LaTeX math text)
+    if (el.closest('.MathJax, .katex, mjx-container, math, .tex, [class*="math" i]')) {
       return false;
     }
 
@@ -551,6 +570,15 @@
     if (el.tagName === 'IMG') {
       const src = el.currentSrc || el.src || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original') || el.getAttribute('data-url') || el.getAttribute('srcset');
       if (!src || !src.trim() || src.trim() === '#' || src.trim() === 'about:blank' || src.trim().startsWith('javascript:')) {
+        return false;
+      }
+    }
+
+    // Exclude small SVG icons (checkboxes, flags, UI chevrons)
+    if (el.tagName === 'SVG' || el instanceof (window.SVGElement || Object)) {
+      const svgW = parseFloat(el.getAttribute('width') || el.style.width || 0);
+      const svgH = parseFloat(el.getAttribute('height') || el.style.height || 0);
+      if ((svgW > 0 && svgW < 32) || (svgH > 0 && svgH < 32)) {
         return false;
       }
     }
@@ -753,8 +781,15 @@
       questionText = extractFormattedText(clone);
     }
 
-    // Filter out Moodle question numbers / headers like "Question 1", "Not yet answered"
-    if (/^Question\s*\d*[\.\:]?$/i.test(questionText.trim()) || /^Not yet answered/i.test(questionText.trim())) {
+    // Strip Moodle status / grade / flag headers from the prompt
+    questionText = questionText
+      .replace(/^Not yet answered\s*/i, '')
+      .replace(/^Marked out of \d+(?:\.\d+)?\s*/i, '')
+      .replace(/^Flag question\s*/i, '')
+      .replace(/^Question\s*\d+[\.\:\s\-]*/i, '')
+      .trim();
+
+    if (/^(?:Question\s*\d*[\.\:]?|Not yet answered|Marked out of.*|Flag question)$/i.test(questionText.trim())) {
       questionText = '';
     }
 
@@ -762,7 +797,9 @@
       const cloneQ = questionEl.cloneNode(true);
       cloneQ.querySelectorAll('.answer, input, .prompt, .options-group, .info, .state, .grade, .outcome, .feedback').forEach(el => el.remove());
       const allText = extractFormattedText(cloneQ);
-      const lines = allText.split('\n').map(l => l.trim()).filter(l => Boolean(l) && !/^Question\s*\d*[\.\:]?$/i.test(l) && !/^Not yet answered/i.test(l));
+      const lines = allText.split('\n')
+        .map(l => l.replace(/^Not yet answered\s*/i, '').replace(/^Marked out of \d+(?:\.\d+)?\s*/i, '').replace(/^Flag question\s*/i, '').replace(/^Question\s*\d+[\.\:\s\-]*/i, '').trim())
+        .filter(l => Boolean(l) && !/^(?:Question\s*\d*[\.\:]?|Not yet answered|Flag question)$/i.test(l));
       const firstOptIdx = lines.findIndex(l => /^(?:[A-Za-z][\.\:\)\-]|(?:\([A-Za-z0-9]\))|\d+[\.\:\)\-])\s+/i.test(l));
       if (firstOptIdx > 0) {
         questionText = lines.slice(0, firstOptIdx).join(' ');
@@ -772,7 +809,14 @@
       }
     }
 
-    if (/^Question\s*\d*[\.\:]?$/i.test(questionText.trim()) || /^Not yet answered/i.test(questionText.trim())) {
+    questionText = questionText
+      .replace(/^Not yet answered\s*/i, '')
+      .replace(/^Marked out of \d+(?:\.\d+)?\s*/i, '')
+      .replace(/^Flag question\s*/i, '')
+      .replace(/^Question\s*\d+[\.\:\s\-]*/i, '')
+      .trim();
+
+    if (/^(?:Question\s*\d*[\.\:]?|Not yet answered|Marked out of.*|Flag question)$/i.test(questionText.trim())) {
       questionText = '';
     }
 
@@ -806,16 +850,20 @@
 
     // If no standard inputs found, detect custom option items / labels / list items
     if (inputs.length === 0) {
-      const candidates = Array.from(questionEl.querySelectorAll('label, [class*="optionItem" i], [class*="option-item" i], [class*="optionContainer" i], [class*="option" i], [class*="choice" i], [class*="answer" i], li')).filter(el => {
-        if (el.matches('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i], [class*="header" i], ul, ol')) return false;
+      const candidates = Array.from(questionEl.querySelectorAll(
+        'label, [class*="optionItem" i], [class*="option-item" i], [class*="optionContainer" i], ' +
+        '[class*="optionCard" i], [class*="option-card" i], [class*="choiceCard" i], [class*="answerCard" i], ' +
+        '[class*="option" i], [class*="choice" i], [class*="answer" i], [class*="item" i], li, [role="button"], [role="radio"]'
+      )).filter(el => {
+        if (el.matches('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i], [class*="header" i]')) return false;
         if (el.closest('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i], [class*="header" i]')) return false;
         const text = el.textContent.trim();
         return text.length > 0 && text.length < 250;
       });
-      // Retain outermost items only (e.g. the li or optionItem wrapper, avoiding splitting innerCircle and label into separate options)
-      const outermost = candidates.filter(item => !candidates.some(other => other !== item && other.contains(item)));
-      if (outermost.length >= 2) {
-        inputs = outermost;
+      // Retain leaf option items (filter out parent containers that enclose other candidate options)
+      const leafCandidates = candidates.filter(item => !candidates.some(other => other !== item && item.contains(other)));
+      if (leafCandidates.length >= 2) {
+        inputs = leafCandidates;
       }
     }
 
@@ -836,8 +884,8 @@
       let text = '';
 
       if (input.tagName !== 'INPUT') {
-        const circle = input.querySelector('[class*="innerCircle" i], [class*="optionInput" i]');
-        const label = input.querySelector('[class*="optionLabel" i]');
+        const circle = input.querySelector('[class*="innerCircle" i], [class*="optionInput" i], [class*="cardLetter" i], [class*="letter" i]');
+        const label = input.querySelector('[class*="optionLabel" i], [class*="cardText" i], [class*="text" i]');
         if (label) {
           const labelText = extractFormattedText(label);
           const letter = circle ? circle.textContent.trim() : String.fromCharCode(65 + idx);
@@ -985,7 +1033,7 @@
     return {
       platform: 'moodle',
       questionNumber,
-      questionType,
+      questionType: isImageOnly ? 'image_based' : questionType,
       hasDiagram: diagrams.length > 0,
       hasImage: hasImages,
       isImageBased: isImageOnly,
@@ -1054,22 +1102,20 @@
     // 4. Resolve all images if question is image-based or contains images
     let resolvedImages = [];
     if (data.imageElements && data.imageElements.length > 0) {
-      try {
-        if (notification) notification.showStatus('Decoding question image...');
-        for (const el of data.imageElements) {
+      if (notification && data.isImageBased) {
+        notification.showStatus('Decoding question image...');
+      }
+      for (const el of data.imageElements) {
+        try {
           const dataUrl = await convertImageElementToDataUrl(el);
           if (dataUrl) resolvedImages.push(dataUrl);
+        } catch (singleErr) {
+          console.warn('[Moodle AI] Single image conversion skipped:', singleErr.message);
         }
-      } catch (imgErr) {
-        console.warn('[Moodle AI] Image decoding warning:', imgErr.message);
-        if (notification) {
-          notification.showError('Could not decode question image. Press Shift+X to snip manually.');
-        }
-        return;
       }
     }
 
-    // If marked as image-based question, verify we successfully decoded at least one image
+    // If marked as image-based question (no question text in DOM), verify at least one image decoded
     if (data.isImageBased && resolvedImages.length === 0) {
       if (notification) {
         notification.showError('Could not decode question image. Press Shift+X to snip manually.');

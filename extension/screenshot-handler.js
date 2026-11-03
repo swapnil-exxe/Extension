@@ -42,14 +42,15 @@
           overflow: hidden !important;
         `;
 
-        // Selection rectangle box (no dark backdrop, normal brightness maintained)
+        // Selection rectangle box: subtle, minimal border with zero blue fill (preserves normal brightness)
         const box = document.createElement('div');
         box.style.cssText = `
           position: absolute !important;
-          border: 2px dashed #2563EB !important;
-          outline: 1px solid rgba(255, 255, 255, 0.95) !important;
-          background: rgba(37, 99, 235, 0.08) !important;
-          box-shadow: none !important;
+          border: 1.5px solid rgba(17, 24, 39, 0.85) !important;
+          outline: 1px dashed rgba(255, 255, 255, 0.9) !important;
+          background-color: transparent !important;
+          background: transparent !important;
+          box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08) !important;
           box-sizing: border-box !important;
           display: none !important;
           pointer-events: none !important;
