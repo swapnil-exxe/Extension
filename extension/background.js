@@ -786,13 +786,6 @@ RULES:
       }
     }
   }
-        answer = mMatch[4].trim() || match.text;
-      } else {
-        option = String(match.id).length <= 2 ? String(match.id).toUpperCase() : String.fromCharCode(65 + Math.max(0, matchIdx));
-        answer = match.text;
-      }
-    }
-  }
   if (!answer) answer = option ? `Option ${option}` : 'Solution determined';
 
   return {
