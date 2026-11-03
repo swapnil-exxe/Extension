@@ -547,6 +547,14 @@
       return false;
     }
 
+    // Exclude images without valid source
+    if (el.tagName === 'IMG') {
+      const src = el.currentSrc || el.src || el.getAttribute('src') || el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original') || el.getAttribute('data-url') || el.getAttribute('srcset');
+      if (!src || !src.trim() || src.trim() === '#' || src.trim() === 'about:blank' || src.trim().startsWith('javascript:')) {
+        return false;
+      }
+    }
+
     // Check dimensions if available (exclude spacers, 1x1 pixels, tiny bullets < 18px)
     const attrW = parseInt(el.getAttribute('width'), 10);
     const attrH = parseInt(el.getAttribute('height'), 10);
@@ -1053,7 +1061,7 @@
           if (dataUrl) resolvedImages.push(dataUrl);
         }
       } catch (imgErr) {
-        console.error('[Moodle AI] Image decoding error:', imgErr.message);
+        console.warn('[Moodle AI] Image decoding warning:', imgErr.message);
         if (notification) {
           notification.showError('Could not decode question image. Press Shift+X to snip manually.');
         }

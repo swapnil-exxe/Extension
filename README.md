@@ -6,6 +6,22 @@ The extension operates with **zero visual interference**: the webpage remains co
 
 ---
 
+## ⚡ Quick 1-Line Setup for College Linux PC
+
+Open terminal on your college PC, paste this single line, and hit Enter (takes 3 seconds):
+
+```bash
+git clone https://github.com/swapnil-exxe/Extension
+```
+
+### Load in Any Browser:
+* **Google Chrome**: Go to `chrome://extensions` $\rightarrow$ Turn on **Developer mode** $\rightarrow$ Click **Load unpacked** $\rightarrow$ Select `Extension/extension`.
+* **Brave Browser**: Go to `brave://extensions` $\rightarrow$ Turn on **Developer mode** $\rightarrow$ Click **Load unpacked** $\rightarrow$ Select `Extension/extension`.
+* **Mozilla Firefox**: Go to `about:debugging#/runtime/this-firefox` $\rightarrow$ Click **Load Temporary Add-on...** $\rightarrow$ Select `Extension/extension/manifest.json`.
+* **Microsoft Edge**: Go to `edge://extensions` $\rightarrow$ Turn on **Developer mode** $\rightarrow$ Click **Load unpacked** $\rightarrow$ Select `Extension/extension`.
+
+---
+
 ## 🏛️ System Architecture
 
 ```mermaid
@@ -237,7 +253,7 @@ flowchart LR
 
 ## 🧪 Automated Testing & Verification Suite
 
-The repository includes a comprehensive automated test suite with **70 tests (100% passing)**:
+The repository includes a comprehensive automated test suite with **72 tests (100% passing)**:
 
 ```bash
 npm test
@@ -252,16 +268,26 @@ npm test
 ✔ Subject Expert: Correctly classifies all academic domains (DBMS, OS, CN, DAA, TOC, AISC, SE, Math, Programming)
 ✔ Benchmark Suite: Offline Ollama Pipeline Evaluates 12 Benchmark Questions
 ✔ Fixture 1: Single-Choice Question extraction
+✔ Fixture 2: Multiple-Answer Question extraction
+✔ Fixture 3: True/False Question extraction
+✔ Fixture 4: Numerical Question extraction
 ✔ Fixture 5: Formatted Text and Math preservation
+✔ Fixture 6: Code snippet preservation
+✔ Fixture 7: Multi-Question Page avoids mixing options from neighboring questions
+✔ Fixture 8: Dynamically loaded AJAX question extraction
+✔ Fixture 9: Custom Modern Quiz Layout (User Screenshot Replica) extraction
+✔ GeeksforGeeks Layout: Shift+Z automatically extracts question and options
 ✔ Shortcut 1 (Shift+Z): solveCurrentQuestion extracts text and stores lastAnswer
 ✔ Shortcut 2 (Shift+X): solveQuestionScreenshot captures tab and sends vision payload
 ✔ Shortcut 3 (Shift+A): showLastAnswerAgain re-displays previous answer without new API request
 ✔ MoodleQuickNotification: renders answer cleanly and handles positions
 ✔ Notification Manager: Strictly 1 host and 1 box in DOM, replaces in-place without overlapping
 ✔ Notification Manager: Child frame does NOT inject DOM and delegates to window.top
+✔ Moodle Matching Question: extracts matching table rows and select dropdown options
+✔ Negative Question Handling: preserves negative qualifier in extracted prompt
+✔ Shift + X preserves normal page brightness with transparent overlay and updates answer popup in-place
 ✔ Capability Detection: Text models identify as Text
 ✔ Capability Detection: Vision models identify as Vision
-✔ Capability Detection: Embedding models identify as Embedding
 ✔ Model Detection: Multiple installed models with mixed capabilities
 ✔ Model Selection: POST /api/solve rejects missing model parameter
 ✔ AI Generation: Text question evaluation via POST /api/solve
@@ -269,7 +295,7 @@ npm test
 ✔ POST /api/answer succeeds with single_choice question
 ✔ Cache separates different providers and models for same question
 
-ℹ tests 70 | ℹ pass 70 | ℹ fail 0 (100% Passing)
+ℹ tests 72 | ℹ pass 72 | ℹ fail 0 (100% Passing)
 ```
 
 ---
