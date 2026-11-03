@@ -234,3 +234,11 @@ test('Cache separates different providers and models for same question', async (
   const data2 = await res2.json();
   assert.equal(data2.cached, false);
 });
+
+test('Health check accurately reflects active model without deprecated preview models', async () => {
+  const res = await fetch(`${baseUrl}/health`);
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.ok(data.model);
+  assert.ok(!data.model.includes('3.8-flash'), 'Should not use 20-req-limit 3.8-flash');
+});

@@ -7,7 +7,7 @@ const DEFAULT_SETTINGS = {
   enabled: true,
   notificationPosition: 'top-right',
   notificationDuration: 500,
-  backendUrl: 'http://localhost:3001'
+  backendUrl: 'https://extension-w1ac.onrender.com'
 };
 
 /**
@@ -81,8 +81,15 @@ async function registerOllamaCorsRules() {
   }
 }
 
-// Call on startup
-registerOllamaCorsRules();
+// Safely register Ollama CORS rules on startup without blocking service worker boot
+registerOllamaCorsRules().catch((err) => {
+  console.warn('[Ollama Pipeline] registerOllamaCorsRules on boot:', err.message);
+});
+if (chrome.runtime && chrome.runtime.onStartup) {
+  chrome.runtime.onStartup.addListener(() => {
+    registerOllamaCorsRules().catch(() => {});
+  });
+}
 
 // Initialize settings on installation and retroactively inject content scripts into open tabs
 chrome.runtime.onInstalled.addListener(async () => {
@@ -330,7 +337,7 @@ async function handleAnalyzeQuestion(payload) {
   const selectedProvider = payload.provider || storage.activeProvider || 'gemini_1';
 
   let targetEndpoint;
-  let timeoutMs = 25000;
+  let timeoutMs = 55000;
   let isLocalOllama = false;
 
   // Secure cloud routing: Keys are managed safely on Render server environment variables
@@ -356,6 +363,7 @@ async function handleAnalyzeQuestion(payload) {
     const cleanUrl = backendUrl.replace(/\/+$/, '');
     targetEndpoint = `${cleanUrl}/api/answer`;
     payload.provider = 'gemini';
+    payload.model = payload.model || 'gemini-flash-lite-latest';
     payload.keySlot = selectedProvider;
     if (storage.userGeminiKey) {
       payload.apiKey = storage.userGeminiKey;
@@ -496,6 +504,25 @@ async function handleAnalyzeQuestion(payload) {
         }
       } catch (fbErr) {
         console.warn('[Background] Failover to Gemini failed:', fbErr.message);
+      }
+    }
+
+    // Automatic failover to local Ollama if Cloud request fails, times out, or exceeds quota
+    // and Ollama is active on the user's computer (port 11434)
+    if (!isLocalOllama) {
+      const ollamaHost = (storage.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+      const localModel = storage.ollamaSelectedModel || 'gemma3:4b';
+      try {
+        const pingOllama = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(1500) });
+        if (pingOllama.ok) {
+          console.warn(`[Background] Cloud request encountered issue (${error.message}). Seamlessly resolving via local Ollama (${localModel})...`);
+          const directData = await runDirectOllamaSolve(payload, ollamaHost, localModel);
+          if (directData && directData.answer) {
+            return { success: true, data: { ...directData, source: 'ollama_fallback' } };
+          }
+        }
+      } catch (ollamaPingErr) {
+        // Local Ollama offline or unreachable, proceed to standard cloud error
       }
     }
 

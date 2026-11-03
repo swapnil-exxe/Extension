@@ -272,13 +272,12 @@ async function callGemini(payload, config = {}) {
   }
 
   const candidateModels = Array.from(new Set([
+    'gemini-flash-lite-latest',
+    'gemini-flash-latest',
+    'gemini-2.5-flash-lite',
     config.model,
     process.env.GEMINI_MODEL,
-    'gemini-3.5-flash-lite',
-    'gemini-3.5-flash',
-    'gemini-flash-lite-latest',
-    'gemini-3.6-flash',
-    'gemini-flash-latest'
+    'gemini-pro-latest'
   ].filter(Boolean)));
 
   const allImages = [];
@@ -363,13 +362,16 @@ async function callGemini(payload, config = {}) {
           method: 'POST',
           headers,
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(config.timeoutMs || 8000)
+          signal: AbortSignal.timeout(config.timeoutMs || 14000)
         });
 
         if (!response.ok) {
           const errorBody = await response.text();
           if (response.status === 429) {
-            markKeyExhausted(currentKey, 60000);
+            markKeyExhausted(currentKey, 300000);
+            lastError = new Error(`Gemini API error (429): Quota exceeded on key ${currentKey ? currentKey.slice(-6) : 'default'}`);
+            console.warn(`[LLM Provider] Key ${currentKey ? currentKey.slice(-6) : 'default'} hit 429 quota. Advancing to next key immediately.`);
+            break;
           }
           throw new Error(`Gemini API error (${response.status}): ${errorBody}`);
         }
@@ -394,10 +396,14 @@ async function callGemini(payload, config = {}) {
         return parsed;
       } catch (err) {
         lastError = err;
+        const isTimeout = err.name === 'TimeoutError' || err.message.includes('timeout') || err.message.includes('aborted');
+        if (isTimeout) {
+          console.warn(`[LLM Provider] Gemini key ${currentKey ? currentKey.slice(-6) : 'default'} timed out on model ${model}. Moving to next key...`);
+          markKeyExhausted(currentKey, 60000);
+          break;
+        }
+
         if (
-          err.name === 'TimeoutError' ||
-          err.message.includes('timeout') ||
-          err.message.includes('aborted') ||
           err.message.includes('400') ||
           err.message.includes('INVALID_ARGUMENT') ||
           err.message.includes('404') ||

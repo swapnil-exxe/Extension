@@ -66,7 +66,7 @@ router.post('/answer', async (req, res) => {
 
     const payload = validation.data;
     const providerName = payload.provider || process.env.LLM_PROVIDER || 'mock';
-    const modelName = payload.model || (providerName === 'chatgpt' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : (process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite'));
+    const modelName = payload.model || (providerName === 'chatgpt' ? (process.env.OPENAI_MODEL || 'gpt-4o-mini') : (process.env.GEMINI_MODEL || 'gemini-flash-lite-latest'));
     const cacheKey = computeCacheKey(payload, providerName, modelName);
 
     // 2. Check if identical request is cached
