@@ -713,7 +713,10 @@ export async function getLLMAnswer(payload, options = {}) {
       try {
         rawResult = await callOpenAI(payload, options);
       } catch (openAiErr) {
-        if (process.env.NODE_ENV === 'test') {
+        if (connectedAccounts.gemini.status === 'connected' || process.env.GEMINI_API_KEY) {
+          console.warn(`[Failover] OpenAI error (${openAiErr.message}). Automatically falling back to Google Gemini.`);
+          rawResult = await callGemini(payload, options);
+        } else if (process.env.NODE_ENV === 'test') {
           rawResult = callMock(payload);
         } else {
           throw openAiErr;

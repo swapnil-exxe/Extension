@@ -474,6 +474,31 @@ async function handleAnalyzeQuestion(payload) {
       } catch (e) {}
     }
 
+    // Automatic failover: if ChatGPT/OpenAI has 0 credits or quota exceeded, seamlessly retry with Gemini
+    if ((selectedProvider === 'chatgpt' || selectedProvider === 'openai') && (msg.includes('quota') || msg.includes('credit') || msg.includes('insufficient_quota'))) {
+      console.warn('[Background] OpenAI quota exceeded. Automatically retrying with Google Gemini...');
+      try {
+        const fallbackPayload = { ...payload, provider: 'gemini' };
+        delete fallbackPayload.apiKey;
+        const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
+        const fallbackRes = await fetch(`${backendUrl.replace(/\/+$/, '')}/api/answer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fallbackPayload)
+        });
+        if (fallbackRes.ok) {
+          const fallbackData = await fallbackRes.json();
+          await chrome.storage.local.set({ activeProvider: 'gemini_1' });
+          if (fallbackData && fallbackData.realUsage) {
+            await updateRealUsageStats(fallbackData.realUsage);
+          }
+          return { success: true, data: fallbackData };
+        }
+      } catch (fbErr) {
+        console.warn('[Background] Failover to Gemini failed:', fbErr.message);
+      }
+    }
+
     if (error.name === 'AbortError' || msg.includes('aborted')) {
       if (isLocalOllama) {
         msg = `Ollama generation timed out (${timeoutMs / 1000}s). The model may still be loading into RAM.`;
