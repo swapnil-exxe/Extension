@@ -250,11 +250,8 @@
 
     const isJSDOM = typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent || '');
     if (!isJSDOM) {
-      if (el.offsetParent === null && el.style.position !== 'fixed' && el.style.position !== 'sticky') {
-        return false;
-      }
       const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-      if (rect && rect.width <= 0 && rect.height <= 0) {
+      if (rect && rect.width === 0 && rect.height === 0) {
         return false;
       }
     }
@@ -304,7 +301,10 @@
       '[class*="questionsAndOptions" i], [class*="quizQuestion" i], [class*="quizComponent" i], ' +
       '[class*="quiz-question" i], [class*="question-card" i], [class*="question_holder" i], ' +
       '[class*="quizCard" i], [class*="QuizQuestionCard" i], [class*="questionCard" i], ' +
-      '[class*="bix-div-container" i]'
+      '[class*="bix-div-container" i], [class*="bix-tbl-container" i], [class*="que-ans" i], ' +
+      '.question, [class*="question-block" i], [class*="question_content" i], [class*="question_title" i], ' +
+      '[role="listitem"], [data-item-id], [class*="geS5n" i], [class*="display_question" i], ' +
+      '[class*="quiz_sortable_question" i], [class*="takeQuestionDiv" i], [class*="questionDiv" i]'
     )).filter(isValidQuestionContainer);
 
     if (rawCandidates.length > 0) {
@@ -444,6 +444,21 @@
     // Fallback: If containers are found (single question or test environment without layout metrics), return first
     if (questions.length > 0) {
       return questions[0];
+    }
+
+    // 6. Viewport fallback: scan visible elements for question text & options
+    const viewportEls = Array.from(document.querySelectorAll('article, section, form, [role="main"], div')).filter(el => {
+      if (el.children.length > 50 || el.children.length < 1) return false;
+      const text = el.textContent || '';
+      return text.length > 25 && text.length < 2500 &&
+             (/\?|^\s*\d+[\.\:\)]/m.test(text)) &&
+             (/^(?:(?:\([A-Da-d0-9]\))|(?:\[[A-Da-d0-9]\])|[A-Da-d0-9][\.\:\)\-])\s+\S+/m.test(text) || /\b(True|False)\b/i.test(text) || el.querySelector('input[type="radio"], input[type="checkbox"]'));
+    });
+    if (viewportEls.length > 0) {
+      const innermost = viewportEls.filter(c => !viewportEls.some(other => other !== c && c.contains(other)));
+      const visible = innermost.filter(isElementVisible);
+      if (visible.length > 0) return visible[0];
+      if (innermost.length > 0) return innermost[0];
     }
 
     return null;
@@ -796,6 +811,19 @@
       }
     }
 
+    // 2b. If still no inputs found, detect elements with option prefixes (A., B., C., D. or (A), (B), etc.)
+    if (inputs.length === 0) {
+      const textEls = Array.from(questionEl.querySelectorAll('p, div, span, li')).filter(el => {
+        if (el.children.length > 3) return false;
+        const t = el.textContent.trim();
+        return /^(?:(?:\([A-Da-d0-9]\))|(?:\[[A-Da-d0-9]\])|[A-Da-d0-9][\.\:\)\-])\s+\S+/.test(t) && t.length < 300;
+      });
+      const outermost = textEls.filter(item => !textEls.some(other => other !== item && other.contains(item)));
+      if (outermost.length >= 2) {
+        inputs = outermost;
+      }
+    }
+
     inputs.forEach((input, idx) => {
       let text = '';
 
@@ -858,6 +886,41 @@
         text: formattedText
       });
     });
+
+    // 2c. If options array is still empty, scan raw text lines for options
+    if (options.length === 0) {
+      const rawLines = (questionEl.innerText || questionEl.textContent || '')
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean);
+      const optLines = rawLines.filter(l => 
+        /^(?:(?:\([A-Da-d0-9]\))|(?:\[[A-Da-d0-9]\])|[A-Da-d0-9][\.\:\)\-])\s+/i.test(l) || /^(?:True|False)$/i.test(l)
+      );
+      if (optLines.length >= 2) {
+        optLines.forEach((optText, idx) => {
+          const letterMatch = optText.match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
+          const letter = letterMatch ? (letterMatch[1] || letterMatch[2] || letterMatch[3]).toUpperCase() : String.fromCharCode(65 + idx);
+          options.push({
+            id: letter,
+            text: optText
+          });
+        });
+      }
+    }
+
+    // If questionText is missing but options exist, infer questionText from preceding lines
+    if ((!questionText || questionText.length < 3) && options.length >= 2) {
+      const rawLines = (questionEl.innerText || questionEl.textContent || '')
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean);
+      const firstOptIndex = rawLines.findIndex(l => 
+        /^(?:(?:\([A-Da-d0-9]\))|(?:\[[A-Da-d0-9]\])|[A-Da-d0-9][\.\:\)\-])\s+/i.test(l) || /^(?:True|False)$/i.test(l)
+      );
+      if (firstOptIndex > 0) {
+        questionText = rawLines.slice(0, firstOptIndex).join(' ');
+      }
+    }
 
     const hasCheckboxes = questionEl.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length > 0;
     const isTrueFalse = options.length === 2 && options.some(o => /true/i.test(o.text)) && options.some(o => /false/i.test(o.text));
@@ -923,20 +986,29 @@
 
     // 2b. Full-Page Fallback Scan for single-question pages (GeeksforGeeks, IndiaBIX, Sanfoundry, etc.)
     if (!data || (!data.question && (!data.options || data.options.length === 0) && (!data.images || data.images.length === 0))) {
-      const mainEl = document.querySelector('main, article, [role="main"], [class*="mainContent" i], #content, .content, .container, body');
-      if (mainEl) {
-        const fallbackData = extractQuestionData(mainEl);
-        if (fallbackData && (fallbackData.question || fallbackData.hasImage) && fallbackData.options && fallbackData.options.length >= 2) {
+      const candidateRoots = [
+        document.querySelector('main, article, [role="main"], [class*="mainContent" i], #content, .content, .container'),
+        document.body
+      ].filter(Boolean);
+      for (const root of candidateRoots) {
+        const fallbackData = extractQuestionData(root);
+        if (fallbackData && (fallbackData.question || fallbackData.hasImage) && ((fallbackData.options && fallbackData.options.length >= 2) || fallbackData.hasImage || fallbackData.question.length > 20)) {
           data = fallbackData;
+          break;
         }
       }
     }
 
     const extractionDurationMs = Math.round(performance.now() - extractStartTime);
 
-    // 3. If no active question could be confidently detected, report error instead of guessing
+    // 3. AUTOMATIC FALLBACK TO VISION SCREENSHOT
+    // If no text question could be extracted from DOM (e.g. image-based question, canvas, protected iframe, or custom web app),
+    // automatically fall back to Vision Screenshot so the user never has to copy, highlight, or manually press Shift+X!
     if (!data || (!data.question && (!data.options || data.options.length === 0) && (!data.images || data.images.length === 0))) {
-      console.warn('[Moodle AI] Could not confidently identify active question.');
+      console.log('[Moodle AI] Text question not detected in DOM, automatically falling back to Vision Screenshot...');
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
+        return solveQuestionScreenshot('', false);
+      }
       if (notification) {
         notification.showStatus('No question detected. Highlight text or press Shift+X to snip.');
       }
