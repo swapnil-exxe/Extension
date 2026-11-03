@@ -23,27 +23,38 @@
         overlay.id = 'moodle-snipping-overlay';
         overlay.style.cssText = `
           position: fixed !important;
-          inset: 0 !important;
-          width: 100vw !important;
-          height: 100vh !important;
-          z-index: 2147483646 !important;
+          top: 0 !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          border: none !important;
+          outline: none !important;
           background: transparent !important;
+          box-shadow: none !important;
+          z-index: 2147483646 !important;
           cursor: crosshair !important;
           user-select: none !important;
           -webkit-user-select: none !important;
           overflow: hidden !important;
         `;
 
-        // Hint bar removed to keep overlay completely clean, invisible, and stealthy
         // Selection rectangle box (no dark backdrop, normal brightness maintained)
         const box = document.createElement('div');
         box.style.cssText = `
           position: absolute !important;
-          border: 2px dashed #000000 !important;
-          background: rgba(0, 0, 0, 0.04) !important;
+          border: 2px dashed #2563EB !important;
+          outline: 1px solid rgba(255, 255, 255, 0.95) !important;
+          background: rgba(37, 99, 235, 0.08) !important;
           box-shadow: none !important;
+          box-sizing: border-box !important;
           display: none !important;
           pointer-events: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
         `;
         overlay.appendChild(box);
 
@@ -69,7 +80,8 @@
           box.style.top = `${startY}px`;
           box.style.width = '0px';
           box.style.height = '0px';
-          box.style.display = 'block';
+          // Keep display none on mousedown to prevent 0x0 dot / line artifact before user starts dragging
+          box.style.display = 'none';
         };
 
         const onMouseMove = (e) => {
@@ -84,10 +96,14 @@
           const width = Math.abs(currentX - startX);
           const height = Math.abs(currentY - startY);
 
-          box.style.left = `${left}px`;
-          box.style.top = `${top}px`;
-          box.style.width = `${width}px`;
-          box.style.height = `${height}px`;
+          // Only display the box once drag exceeds 2px to eliminate line artifacts
+          if (width >= 2 || height >= 2) {
+            box.style.left = `${left}px`;
+            box.style.top = `${top}px`;
+            box.style.width = `${width}px`;
+            box.style.height = `${height}px`;
+            box.style.display = 'block';
+          }
         };
 
         const onMouseUp = (e) => {
@@ -95,6 +111,7 @@
           e.preventDefault();
           e.stopPropagation();
           isDragging = false;
+          box.style.display = 'none';
 
           const currentX = e.clientX;
           const currentY = e.clientY;

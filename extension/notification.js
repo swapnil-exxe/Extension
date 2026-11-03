@@ -80,9 +80,23 @@
 
       const host = document.createElement('div');
       host.id = 'moodle-quick-notify-host';
-      host.style.position = 'fixed';
-      host.style.zIndex = '2147483647';
-      host.style.pointerEvents = 'none';
+      host.style.cssText = `
+        position: fixed !important;
+        z-index: 2147483647 !important;
+        pointer-events: none !important;
+        display: none !important;
+        border: none !important;
+        outline: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 0 !important;
+        font-size: 0 !important;
+        width: auto !important;
+        height: auto !important;
+        overflow: visible !important;
+      `;
       this.applyPositionStyles(host, this.currentPosition);
 
       // Shadow DOM for complete CSS isolation
@@ -90,7 +104,14 @@
       const style = document.createElement('style');
       style.textContent = `
         :host {
-          all: initial;
+          all: initial !important;
+          display: block !important;
+          border: none !important;
+          outline: none !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
         }
         .quick-notify-box {
           display: none;
@@ -148,6 +169,29 @@
         .more-dots-btn:hover {
           background: #E5E5E5;
           color: #000000;
+        }
+        @media (prefers-color-scheme: dark) {
+          .quick-notify-box {
+            background: #1E1E1E !important;
+            color: #F9FAFB !important;
+            border-color: #374151 !important;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45) !important;
+          }
+          .quick-notify-box.status {
+            background: #1E1E1E !important;
+            color: #9CA3AF !important;
+            border-color: #374151 !important;
+          }
+          .quick-notify-box.error {
+            background: #1E1E1E !important;
+            color: #F87171 !important;
+            border-color: #7F1D1D !important;
+          }
+          .more-dots-btn {
+            background: #2D3748 !important;
+            color: #F9FAFB !important;
+            border-color: #4B5563 !important;
+          }
         }
       `;
       shadow.appendChild(style);
@@ -284,6 +328,7 @@
     renderCurrentChunk() {
       this.clearTimer();
       if (!this.box) return;
+      if (this.host) this.host.style.setProperty('display', 'block', 'important');
 
       this.box.className = 'quick-notify-box visible';
       this.box.innerHTML = '';
@@ -346,6 +391,7 @@
       this.createDOM();
       this.clearTimer();
 
+      if (this.host) this.host.style.setProperty('display', 'block', 'important');
       if (this.box) {
         this.box.className = 'quick-notify-box visible status';
         this.box.textContent = msg || 'Analyzing...';
@@ -397,6 +443,7 @@
       this.createDOM();
       this.clearTimer();
 
+      if (this.host) this.host.style.setProperty('display', 'block', 'important');
       if (this.box) {
         this.box.className = 'quick-notify-box visible error';
         this.box.textContent = this.formatErrorMessage(msg);
@@ -413,6 +460,9 @@
       if (this.box) {
         this.box.className = 'quick-notify-box';
         this.box.textContent = '';
+      }
+      if (this.host) {
+        this.host.style.setProperty('display', 'none', 'important');
       }
     }
 
