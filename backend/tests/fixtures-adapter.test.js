@@ -768,3 +768,79 @@ test('Notification Manager: Child frame does NOT inject DOM and delegates to win
   assert.equal(sentData.payload.option, 'C');
 });
 
+test('Moodle Matching Question: extracts matching table rows and select dropdown options', () => {
+  const matchHtml = `
+  <div class="que match deferredfeedback notyetanswered" id="q3">
+    <div class="qtext">Match each algorithmic paradigm to its exemplar:</div>
+    <div class="abtn"><span class="qno">3</span></div>
+    <div class="content">
+      <div class="formulation">
+        <table class="answer">
+          <tbody>
+            <tr class="r0">
+              <td class="text"><p>Divide and Conquer</p></td>
+              <td class="control">
+                <select name="q3:1_sub">
+                  <option value="0">Choose...</option>
+                  <option value="1">Dijkstra</option>
+                  <option value="2">Merge Sort</option>
+                  <option value="3">Fractional Knapsack</option>
+                </select>
+              </td>
+            </tr>
+            <tr class="r1">
+              <td class="text"><p>Greedy Algorithm</p></td>
+              <td class="control">
+                <select name="q3:2_sub">
+                  <option value="0">Choose...</option>
+                  <option value="1">Dijkstra</option>
+                  <option value="2">Merge Sort</option>
+                  <option value="3">Fractional Knapsack</option>
+                </select>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+
+  const dom = setupDOM(matchHtml);
+  const { MoodleAdapter } = dom.window;
+
+  const containers = MoodleAdapter.getQuestionContainers();
+  assert.equal(containers.length, 1);
+
+  const data = MoodleAdapter.extractQuestionData(containers[0]);
+  assert.equal(data.questionType, 'matching');
+  assert.ok(data.question.includes('Divide and Conquer'));
+  assert.ok(data.question.includes('Greedy Algorithm'));
+  assert.ok(data.options.length >= 3);
+  assert.ok(data.options.some(o => o.text.includes('Merge Sort')));
+  assert.ok(data.options.some(o => o.text.includes('Dijkstra')));
+});
+
+test('Negative Question Handling: preserves negative qualifier in extracted prompt', () => {
+  const negativeHtml = `
+  <div class="que multichoice deferredfeedback notyetanswered" id="q4">
+    <div class="qtext">Which of the following is NOT an advantage of QuickSort over MergeSort?</div>
+    <div class="content">
+      <div class="answer">
+        <div class="r0"><input type="radio" name="q4_a" id="q4_1"><label for="q4_1">A. In-place partitioning</label></div>
+        <div class="r1"><input type="radio" name="q4_a" id="q4_2"><label for="q4_2">B. Guaranteed O(n log n) worst-case time complexity</label></div>
+        <div class="r2"><input type="radio" name="q4_a" id="q4_3"><label for="q4_3">C. Cache locality</label></div>
+        <div class="r3"><input type="radio" name="q4_a" id="q4_4"><label for="q4_4">D. Low memory overhead</label></div>
+      </div>
+    </div>
+  </div>`;
+
+  const dom = setupDOM(negativeHtml);
+  const { MoodleAdapter } = dom.window;
+
+  const containers = MoodleAdapter.getQuestionContainers();
+  const data = MoodleAdapter.extractQuestionData(containers[0]);
+  assert.ok(data.question.includes('NOT an advantage'));
+  assert.equal(data.options.length, 4);
+});
+
+

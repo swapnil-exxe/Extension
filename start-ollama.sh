@@ -3,8 +3,8 @@
 # Starting Ollama with full Chrome Extension CORS support (Linux)
 # ====================================================================
 
-export OLLAMA_ORIGINS="*"
-export OLLAMA_HOST="0.0.0.0:11434"
+export OLLAMA_ORIGINS="chrome-extension://*,http://127.0.0.1:*,http://localhost:*"
+export OLLAMA_HOST="127.0.0.1:11434"
 
 echo "======================================================="
 echo " Starting Ollama with Chrome Extension CORS support (Linux)"

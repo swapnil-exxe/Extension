@@ -615,19 +615,55 @@ async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434
 
   if (!model) throw new Error('No local Ollama model found');
 
-  const rawImages = [];
   const incomingImages = Array.isArray(payload.images) && payload.images.length > 0
     ? payload.images
     : (payload.image ? [payload.image] : []);
-  for (const img of incomingImages) {
-    if (typeof img === 'string' && img.trim()) {
-      rawImages.push(img.replace(/^data:image\/[a-zA-Z+]+;base64,/, '').trim());
+
+  let rawImages = [];
+  if (incomingImages.length > 0) {
+    // Check if selected model is vision capable or text-only
+    let isVision = false;
+    try {
+      const showRes = await fetch(`${baseUrl}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: model }),
+        signal: AbortSignal.timeout(2000)
+      }).catch(() => null);
+      if (showRes && showRes.ok) {
+        const showData = await showRes.json();
+        isVision = detectModelCapability(showData) === 'Vision';
+      } else {
+        isVision = detectModelCapability({ name: model }) === 'Vision';
+      }
+    } catch (_) {
+      isVision = detectModelCapability({ name: model }) === 'Vision';
+    }
+
+    const hasUsableText = (payload.question && payload.question.trim().length > 10) || (Array.isArray(payload.options) && payload.options.length > 0);
+
+    if (!isVision) {
+      if (hasUsableText) {
+        // Send usable extracted text to text-only models, strip image to avoid Ollama error
+        rawImages = [];
+      } else {
+        throw new Error(
+          `The selected local model "${model}" is a text-only model and does not support image questions. ` +
+          `Please select a vision-capable local model (such as llama3.2-vision, llava, or qwen2-vl) or use text questions.`
+        );
+      }
+    } else {
+      for (const img of incomingImages) {
+        if (typeof img === 'string' && img.trim()) {
+          rawImages.push(img.replace(/^data:image\/[a-zA-Z+]+;base64,/, '').trim());
+        }
+      }
     }
   }
 
   let prompt = '';
   if (rawImages.length > 0) {
-    prompt += `Visual Question Mode: Carefully read and solve the question shown in the attached image.\n`;
+    prompt += `Visual Question Mode: Carefully inspect and solve the question shown in the attached image.\n`;
   }
   if (payload.question && payload.question.trim()) {
     prompt += `Question:\n${payload.question.trim()}\n\n`;
@@ -645,10 +681,13 @@ async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434
   const system = `You are an expert academic tutor and AI inference engine solving quiz questions.
 Output strictly valid JSON with keys: "option", "answer", "reason", "confidence", "status".
 RULES:
-1. Always determine and select the single best option. Under NO circumstances output "UNCERTAIN", "cannot determine", or hesitation.
-2. For multiple-choice questions, set "option" to the exact letter (e.g. "A", "B", "C", "D") and "answer" to the exact option text.
-3. For short-answer/math, set "option" to "" and "answer" to the calculated value.
-4. Set "confidence" to 0.95 and "status" to "success".`;
+1. Identify the question type (single-choice, multiple-choice, numerical, matching, true/false, DSA, coding).
+2. CRITICAL FOR NEGATIVE QUESTIONS: If the question contains "NOT", "EXCEPT", "FALSE", "INCORRECT", "LEAST", "NEVER", or "UNLIKE", focus on the negative qualifier. Identify the statement that is FALSE or does NOT apply, and choose that option.
+3. For multiple-choice questions, set "option" to the exact option letter (e.g. "A", "B", "C", "D") and "answer" to the exact option text.
+4. For matching questions, format "answer" with the complete item pairings (e.g. "1-B, 2-D, 3-A") and "option" to the corresponding matching choice letter.
+5. For short-answer/math, set "option" to "" and "answer" to the calculated value.
+6. Provide a concise 1-sentence verification in "reason".
+7. Calibrate "confidence": 0.85-1.0 for verified answers, 0.60-0.80 if ambiguous. Set "status" to "success".`;
 
   const body = {
     model,
@@ -726,13 +765,27 @@ RULES:
       });
     }
 
-    if (!match) match = options[0];
+    if (!match && (parsed.reason || parsed.explanation)) {
+      const rMatch = `${parsed.reason || ''} ${parsed.explanation || ''}`.match(/\b(?:option|choice)\s+([A-D])\b/i);
+      if (rMatch) {
+        const rLetter = rMatch[1].toUpperCase();
+        match = options.find(o => String(o.id).toUpperCase() === rLetter) ||
+                options[rLetter.charCodeAt(0) - 65];
+      }
+    }
 
     if (match) {
       const mMatch = String(match.text || '').match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
       const matchIdx = options.indexOf(match);
       if (mMatch) {
         option = (mMatch[1] || mMatch[2] || mMatch[3]).toUpperCase();
+        answer = mMatch[4] ? mMatch[4].trim() : match.text;
+      } else {
+        option = String(match.id || String.fromCharCode(65 + matchIdx)).toUpperCase();
+        answer = match.text;
+      }
+    }
+  }
         answer = mMatch[4].trim() || match.text;
       } else {
         option = String(match.id).length <= 2 ? String(match.id).toUpperCase() : String.fromCharCode(65 + Math.max(0, matchIdx));
@@ -763,9 +816,28 @@ async function handleOllamaStatus(localBackendUrl, ollamaUrl) {
   let backend = (localBackendUrl || st.localBackendUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
   const ollama = ollamaUrl || st.ollamaUrl || 'http://127.0.0.1:11434';
   
+  // 1. Direct Ollama check first for instant response without needing Node backend
+  try {
+    const verRes = await fetch(`${ollama}/api/version`, { signal: AbortSignal.timeout(1500) }).catch(() => null);
+    const tagsRes = await fetch(`${ollama}/api/tags`, { signal: AbortSignal.timeout(1500) });
+    if (tagsRes.ok) {
+      const tagsData = await tagsRes.json();
+      const verData = verRes && verRes.ok ? await verRes.json() : {};
+      return {
+        ok: true,
+        url: ollama,
+        version: verData.version || 'installed',
+        modelsCount: Array.isArray(tagsData.models) ? tagsData.models.length : 0,
+        activeBackendUrl: ollama,
+        isDirect: true
+      };
+    }
+  } catch (_) {}
+
+  // 2. Node backend fallback (if user is running backend on port 3000/3001)
   try {
     const url = `${backend}/api/ollama/status?url=${encodeURIComponent(ollama)}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     data.activeBackendUrl = backend;
@@ -777,7 +849,7 @@ async function handleOllamaStatus(localBackendUrl, ollamaUrl) {
     if (altBackend) {
       try {
         const altUrl = `${altBackend}/api/ollama/status?url=${encodeURIComponent(ollama)}`;
-        const altRes = await fetch(altUrl);
+        const altRes = await fetch(altUrl, { signal: AbortSignal.timeout(2000) });
         if (altRes.ok) {
           const altData = await altRes.json();
           altData.activeBackendUrl = altBackend;
@@ -786,40 +858,57 @@ async function handleOllamaStatus(localBackendUrl, ollamaUrl) {
         }
       } catch (_) {}
     }
-
-    // Direct Ollama fallback if Node backend is offline or on another port
-    try {
-      const verRes = await fetch(`${ollama}/api/version`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
-      const tagsRes = await fetch(`${ollama}/api/tags`, { signal: AbortSignal.timeout(3000) });
-      if (tagsRes.ok) {
-        const tagsData = await tagsRes.json();
-        const verData = verRes && verRes.ok ? await verRes.json() : {};
-        return {
-          ok: true,
-          url: ollama,
-          version: verData.version || 'installed',
-          modelsCount: Array.isArray(tagsData.models) ? tagsData.models.length : 0,
-          activeBackendUrl: ollama,
-          isDirect: true
-        };
-      }
-    } catch (_) {}
-
-    throw err;
+    throw new Error('Ollama is not running. Please open the Ollama app or run "ollama serve" in terminal.');
   }
 }
 
 /**
- * Get installed Ollama models via local backend (with automatic 3000/3001 port fallback and direct Ollama fallback)
+ * Get installed Ollama models via direct Ollama first (with automatic Node backend fallback)
  */
 async function handleOllamaModels(localBackendUrl, ollamaUrl) {
   const st = await chrome.storage.local.get(['localBackendUrl', 'ollamaUrl']);
   let backend = (localBackendUrl || st.localBackendUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
   const ollama = ollamaUrl || st.ollamaUrl || 'http://127.0.0.1:11434';
-  
+
+  // 1. Direct Ollama query first: eliminates 3-6s connection timeouts when Node is not running
+  try {
+    const tagsRes = await fetch(`${ollama}/api/tags`, { signal: AbortSignal.timeout(2000) });
+    if (tagsRes.ok) {
+      const tagsData = await tagsRes.json();
+      const rawList = Array.isArray(tagsData.models) ? tagsData.models : [];
+      const models = rawList.map((m) => {
+        const exactName = m.name || m.model || '';
+        const tag = exactName.includes(':') ? exactName.split(':')[1] : 'latest';
+        const capability = detectModelCapability(m);
+        return {
+          name: exactName,
+          model: exactName,
+          tag,
+          size: formatBytes(m.size),
+          sizeBytes: m.size || 0,
+          family: m.details?.family || (m.details?.families && m.details.families[0]) || 'unknown',
+          parameterSize: m.details?.parameter_size || '',
+          quantization: m.details?.quantization_level || '',
+          capability,
+          modifiedAt: m.modified_at || ''
+        };
+      });
+      return {
+        ok: true,
+        url: ollama,
+        models,
+        count: models.length,
+        activeBackendUrl: ollama,
+        isDirect: true,
+        message: models.length === 0 ? 'No local models found in Ollama.' : null
+      };
+    }
+  } catch (_) {}
+
+  // 2. Node backend fallback (if running on port 3000/3001)
   try {
     const url = `${backend}/api/ollama/models?url=${encodeURIComponent(ollama)}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     data.activeBackendUrl = backend;
@@ -831,7 +920,7 @@ async function handleOllamaModels(localBackendUrl, ollamaUrl) {
     if (altBackend) {
       try {
         const altUrl = `${altBackend}/api/ollama/models?url=${encodeURIComponent(ollama)}`;
-        const altRes = await fetch(altUrl);
+        const altRes = await fetch(altUrl, { signal: AbortSignal.timeout(2000) });
         if (altRes.ok) {
           const altData = await altRes.json();
           altData.activeBackendUrl = altBackend;
@@ -840,43 +929,7 @@ async function handleOllamaModels(localBackendUrl, ollamaUrl) {
         }
       } catch (_) {}
     }
-
-    // Direct Ollama fallback if Node backend is offline
-    try {
-      const tagsRes = await fetch(`${ollama}/api/tags`, { signal: AbortSignal.timeout(4000) });
-      if (tagsRes.ok) {
-        const tagsData = await tagsRes.json();
-        const rawList = Array.isArray(tagsData.models) ? tagsData.models : [];
-        const models = rawList.map((m) => {
-          const exactName = m.name || m.model || '';
-          const tag = exactName.includes(':') ? exactName.split(':')[1] : 'latest';
-          const capability = detectModelCapability(m);
-          return {
-            name: exactName,
-            model: exactName,
-            tag,
-            size: formatBytes(m.size),
-            sizeBytes: m.size || 0,
-            family: m.details?.family || (m.details?.families && m.details.families[0]) || 'unknown',
-            parameterSize: m.details?.parameter_size || '',
-            quantization: m.details?.quantization_level || '',
-            capability,
-            modifiedAt: m.modified_at || ''
-          };
-        });
-        return {
-          ok: true,
-          url: ollama,
-          models,
-          count: models.length,
-          activeBackendUrl: ollama,
-          isDirect: true,
-          message: models.length === 0 ? 'No local models found in Ollama.' : null
-        };
-      }
-    } catch (_) {}
-
-    throw err;
+    throw new Error('Could not fetch Ollama models. Please ensure Ollama is running at http://127.0.0.1:11434');
   }
 }
 

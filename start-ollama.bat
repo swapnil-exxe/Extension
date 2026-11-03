@@ -3,8 +3,8 @@ title Starting Ollama with Extension Access
 echo =======================================================
 echo  Starting Ollama with full Chrome Extension CORS support
 echo =======================================================
-set OLLAMA_ORIGINS=*
-set OLLAMA_HOST=0.0.0.0:11434
+set OLLAMA_ORIGINS=chrome-extension://*,http://127.0.0.1:*,http://localhost:*
+set OLLAMA_HOST=127.0.0.1:11434
 
 REM Check if Ollama app exists in standard locations
 if exist "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe" (

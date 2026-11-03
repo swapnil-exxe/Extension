@@ -922,14 +922,42 @@
       }
     }
 
+    // Support Moodle matching questions (<select> elements in rows)
+    const selects = Array.from(questionEl.querySelectorAll('select, [role="listbox"]'));
+    if (inputs.length === 0 && options.length === 0 && selects.length > 0) {
+      const rows = Array.from(questionEl.querySelectorAll('tr, .match-row, [class*="row" i]')).filter(r => r.querySelector('select'));
+      if (rows.length > 0) {
+        let matchingPrompt = questionText ? `${questionText}\n\nMatch each item:\n` : 'Match each item:\n';
+        const allChoices = new Set();
+        rows.forEach((row, rIdx) => {
+          const itemTextEl = row.querySelector('.text, [class*="text" i], td:first-child');
+          const itemText = itemTextEl ? extractFormattedText(itemTextEl) : `Item ${rIdx + 1}`;
+          const select = row.querySelector('select');
+          const choices = select ? Array.from(select.options).map(o => o.text.trim()).filter(t => t && !/choose|select/i.test(t)) : [];
+          choices.forEach(c => allChoices.add(c));
+          matchingPrompt += `${rIdx + 1}. ${itemText} -> [Options: ${choices.join(', ')}]\n`;
+        });
+        questionText = matchingPrompt;
+        Array.from(allChoices).forEach((choice, cIdx) => {
+          options.push({
+            id: String.fromCharCode(65 + cIdx),
+            text: `${String.fromCharCode(65 + cIdx)}. ${choice}`
+          });
+        });
+      }
+    }
+
     const hasCheckboxes = questionEl.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length > 0;
     const isTrueFalse = options.length === 2 && options.some(o => /true/i.test(o.text)) && options.some(o => /false/i.test(o.text));
+    const isMatching = selects.length > 0 && options.length > 0;
     const isDSA = /\b(time complexity|space complexity|big-o|recurrence|binary search|merge sort|quicksort|dynamic programming|dijkstra|graph|bfs|dfs|heap|tree)\b/i.test(questionText);
     const isCoding = /```|public static|def |function\(|int main/i.test(questionText) || questionEl.querySelector('pre, code') !== null;
 
     let questionType = 'single_choice';
     if (isImageOnly) {
       questionType = 'image_based';
+    } else if (isMatching) {
+      questionType = 'matching';
     } else if (isTrueFalse || questionEl.classList.contains('truefalse')) {
       questionType = 'true_false';
     } else if (hasCheckboxes) {
