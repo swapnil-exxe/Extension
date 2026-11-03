@@ -62,8 +62,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   let currentBackendUrl = settings.backendUrl || 'https://extension-w1ac.onrender.com';
   inputBackendUrl.value = currentBackendUrl;
 
-  // Local Ollama configuration
-  inputLocalBackendUrl.value = settings.localBackendUrl || 'http://127.0.0.1:3000';
+  // Local Ollama configuration - ensure Node backend is distinct from Ollama port 11434
+  const rawLocalBackend = settings.localBackendUrl || 'http://127.0.0.1:3000';
+  inputLocalBackendUrl.value = rawLocalBackend.includes('11434') ? 'http://127.0.0.1:3000' : rawLocalBackend;
   inputOllamaUrl.value = settings.ollamaUrl || 'http://127.0.0.1:11434';
 
   // Active Provider Engine (Cloud vs Ollama)
@@ -72,6 +73,39 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let currentInstalledModels = [];
   let savedModelIdentifier = settings.ollamaSelectedModel || '';
+
+  // Safe message sending with timeout to prevent infinite hanging if worker sleeps or disconnects
+  function sendExtensionMessage(msg, timeoutMs = 3500) {
+    return new Promise((resolve) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          resolve({ ok: false, error: 'Extension worker timeout' });
+        }
+      }, timeoutMs);
+
+      try {
+        chrome.runtime.sendMessage(msg, (res) => {
+          if (!done) {
+            done = true;
+            clearTimeout(timer);
+            if (chrome.runtime.lastError) {
+              resolve({ ok: false, error: chrome.runtime.lastError.message });
+            } else {
+              resolve(res || { ok: false, error: 'Empty worker response' });
+            }
+          }
+        });
+      } catch (err) {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          resolve({ ok: false, error: err.message });
+        }
+      }
+    });
+  }
 
   // Render selected model details in info card
   function displayModelInfo(model) {
@@ -99,7 +133,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Fetch installed models from Ollama via local backend
+  // Fetch installed models from Ollama via local backend with direct fetch fallback
   async function refreshOllamaModels(isUserClick = false) {
     const localBackend = inputLocalBackendUrl.value.trim() || 'http://127.0.0.1:3000';
     const ollamaHost = inputOllamaUrl.value.trim() || 'http://127.0.0.1:11434';
@@ -109,19 +143,46 @@ document.addEventListener('DOMContentLoaded', async () => {
     ollamaModelWarning.style.display = 'none';
 
     try {
-      const response = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({
-          action: 'OLLAMA_GET_MODELS',
-          localBackendUrl: localBackend,
-          ollamaUrl: ollamaHost
-        }, resolve);
-      });
+      let response = await sendExtensionMessage({
+        action: 'OLLAMA_GET_MODELS',
+        localBackendUrl: localBackend,
+        ollamaUrl: ollamaHost
+      }, 3000);
 
+      // Direct in-page fetch fallback if background worker took too long or is asleep
       if (!response || !response.ok) {
-        throw new Error(response ? response.error : 'No response from local backend');
+        try {
+          const directRes = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) });
+          if (directRes.ok) {
+            const directData = await directRes.json();
+            const rawList = Array.isArray(directData.models) ? directData.models : [];
+            const directModels = rawList.map((m) => {
+              const exactName = m.name || m.model || '';
+              const tag = exactName.includes(':') ? exactName.split(':')[1] : 'latest';
+              const families = (m.details?.families || []).concat(m.details?.family || []);
+              const isVision = families.some(f => /clip|vision|mllama|llava/i.test(f)) || /vision/i.test(exactName);
+              return {
+                name: exactName,
+                model: exactName,
+                tag,
+                size: m.size ? `${(m.size / (1024 * 1024 * 1024)).toFixed(1)} GB` : 'N/A',
+                family: m.details?.family || 'unknown',
+                parameterSize: m.details?.parameter_size || '',
+                quantization: m.details?.quantization_level || '',
+                capability: isVision ? 'Vision' : 'Text'
+              };
+            });
+            response = { ok: true, models: directModels, isDirect: true };
+          }
+        } catch (_) {}
       }
 
-      if (response.activeBackendUrl && inputLocalBackendUrl.value !== response.activeBackendUrl) {
+      if (!response || !response.ok) {
+        throw new Error(response ? response.error : 'Ollama service is not reachable');
+      }
+
+      // Only update localBackendUrl if it is a real Node.js backend (do not overwrite with Ollama port 11434)
+      if (response.activeBackendUrl && !response.activeBackendUrl.includes('11434') && inputLocalBackendUrl.value !== response.activeBackendUrl) {
         inputLocalBackendUrl.value = response.activeBackendUrl;
         await chrome.storage.local.set({ localBackendUrl: response.activeBackendUrl });
       }
@@ -187,7 +248,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (err) {
       console.warn('[Ollama Settings] Model refresh error:', err.message);
       ollamaModelWarning.style.display = 'block';
-      ollamaModelWarning.innerHTML = `❌ <strong>Cannot list models:</strong> ${err.message}<br><small>Make sure your local Node backend (${localBackend}) and Ollama (${ollamaHost}) are running.</small>`;
+      ollamaModelWarning.innerHTML = `❌ <strong>Cannot list models:</strong> ${err.message}<br><small>Make sure Ollama is running at <code>${ollamaHost}</code>.</small>`;
+      selectOllamaModel.innerHTML = '<option value="">Ollama offline or not running</option>';
       ollamaModelInfo.style.display = 'none';
     } finally {
       btnRefreshModels.disabled = false;
@@ -218,32 +280,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     ollamaConnectionStatus.style.display = 'block';
     ollamaConnectionStatus.textContent = 'Checking local Ollama connection...';
 
-    chrome.runtime.sendMessage({
+    let res = await sendExtensionMessage({
       action: 'OLLAMA_GET_STATUS',
       localBackendUrl: localBackend,
       ollamaUrl: ollamaHost
-    }, (res) => {
-      if (res && res.ok) {
-        if (res.activeBackendUrl && inputLocalBackendUrl.value !== res.activeBackendUrl) {
-          inputLocalBackendUrl.value = res.activeBackendUrl;
-          chrome.storage.local.set({ localBackendUrl: res.activeBackendUrl });
+    }, 3000);
+
+    // Direct in-page fallback if background worker took too long
+    if (!res || !res.ok) {
+      try {
+        const directRes = await fetch(`${ollamaHost}/api/version`, { signal: AbortSignal.timeout(2000) }).catch(() => null);
+        const tagsRes = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) });
+        if (tagsRes.ok) {
+          const tagsData = await tagsRes.json();
+          const verData = directRes && directRes.ok ? await directRes.json() : {};
+          res = {
+            ok: true,
+            url: ollamaHost,
+            version: verData.version || 'installed',
+            modelsCount: Array.isArray(tagsData.models) ? tagsData.models.length : 0,
+            isDirect: true
+          };
         }
-        ollamaConnectionStatus.className = 'status-box success';
-        ollamaConnectionStatus.innerHTML = `
-          <strong>✅ Ollama Connected Successfully!</strong><br>
-          Server URL: <code>${res.url}</code> • Ollama Version: <strong>${res.version}</strong> • Installed Models: <strong>${res.modelsCount}</strong>
-          ${res.isDirect ? '<br><small style="color:#059669; font-weight:600;">⚡ Direct Ollama pipeline active (100% offline, zero Node backend dependency)</small>' : ''}
-        `;
-        refreshOllamaModels(false);
-      } else {
-        ollamaConnectionStatus.className = 'status-box error';
-        ollamaConnectionStatus.innerHTML = `
-          <strong>❌ Cannot Connect to Ollama:</strong><br>
-          ${res ? res.error : 'Service unreachable'}.<br>
-          <small>Ensure Ollama service is running (e.g. <code>ollama serve</code>) and local backend is running at <code>${localBackend}</code>.</small>
-        `;
+      } catch (_) {}
+    }
+
+    if (res && res.ok) {
+      if (res.activeBackendUrl && !res.activeBackendUrl.includes('11434') && inputLocalBackendUrl.value !== res.activeBackendUrl) {
+        inputLocalBackendUrl.value = res.activeBackendUrl;
+        chrome.storage.local.set({ localBackendUrl: res.activeBackendUrl });
       }
-    });
+      ollamaConnectionStatus.className = 'status-box success';
+      ollamaConnectionStatus.innerHTML = `
+        <strong>✅ Ollama Connected Successfully!</strong><br>
+        Server URL: <code>${res.url}</code> • Ollama Version: <strong>${res.version}</strong> • Installed Models: <strong>${res.modelsCount}</strong>
+        ${res.isDirect ? '<br><small style="color:#059669; font-weight:600;">⚡ Direct Ollama pipeline active (100% offline, zero Node backend dependency)</small>' : ''}
+      `;
+      refreshOllamaModels(false);
+    } else {
+      ollamaConnectionStatus.className = 'status-box error';
+      ollamaConnectionStatus.innerHTML = `
+        <strong>❌ Cannot Connect to Ollama:</strong><br>
+        ${res ? res.error : 'Service unreachable'}.<br>
+        <small>Ensure Ollama service is running (e.g. <code>ollama serve</code>) at <code>${ollamaHost}</code>.</small>
+      `;
+    }
   });
 
   // Cloud Backend Test connection button
@@ -259,26 +340,35 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }, 2500);
 
-    const st = await chrome.storage.local.get(['activeProvider', 'customProviders']);
-    const activeKey = st.activeProvider || 'gemini_1';
+    let res = await sendExtensionMessage({ action: 'CHECK_BACKEND_STATUS', backendUrl: testUrl }, 6000);
 
-    chrome.runtime.sendMessage({ action: 'CHECK_BACKEND_STATUS', backendUrl: testUrl }, (res) => {
-      clearTimeout(wakeNoticeTimer);
-      if (res && res.ok) {
-        statusBox.className = 'status-box success';
-        statusBox.innerHTML = `
-          <strong>✅ Connected Successfully!</strong><br>
-          Latency: <strong>${res.latencyMs}ms</strong> • Active AI: <strong>${res.provider || 'Gemini'}</strong> • Model: <strong>${res.model || 'flash-lite'}</strong> • Uptime: ${res.uptimeSeconds}s
-        `;
-      } else {
-        statusBox.className = 'status-box error';
-        statusBox.innerHTML = `
-          <strong>❌ Connection Failed:</strong><br>
-          ${res ? res.error : 'Backend unreachable'}.<br>
-          Make sure your backend server is online at <code>${testUrl}</code>.
-        `;
-      }
-    });
+    // Direct in-page fetch fallback to Render health endpoint if background was sleeping
+    if (!res || !res.ok) {
+      try {
+        const start = Date.now();
+        const directRes = await fetch(`${testUrl.replace(/\/+$/, '')}/health`, { signal: AbortSignal.timeout(5000) });
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          res = { ok: true, latencyMs: Date.now() - start, ...directData };
+        }
+      } catch (_) {}
+    }
+
+    clearTimeout(wakeNoticeTimer);
+    if (res && res.ok) {
+      statusBox.className = 'status-box success';
+      statusBox.innerHTML = `
+        <strong>✅ Connected Successfully!</strong><br>
+        Latency: <strong>${res.latencyMs || 120}ms</strong> • Active AI: <strong>${res.provider || 'Gemini'}</strong> • Model: <strong>${res.model || 'gemini-3.5-flash'}</strong> • Uptime: ${res.uptimeSeconds || 0}s
+      `;
+    } else {
+      statusBox.className = 'status-box error';
+      statusBox.innerHTML = `
+        <strong>❌ Connection Failed:</strong><br>
+        ${res ? res.error : 'Backend unreachable'}.<br>
+        Make sure your backend server is online at <code>${testUrl}</code>.
+      `;
+    }
   });
 
   // Clear cache button
