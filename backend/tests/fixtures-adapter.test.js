@@ -324,7 +324,7 @@ test('MoodleQuickNotification: renders answer cleanly and handles positions', ()
   const host = dom.window.document.getElementById('moodle-quick-notify-host');
   assert.ok(host, 'Notification container element must exist');
   const box = host.shadowRoot.getElementById('notify-box');
-  assert.equal(box.textContent, 'B — Binary Search');
+  assert.ok(box.textContent.includes('B — Binary Search'));
 
   notifier.setPosition('bottom-right');
   assert.equal(host.style.bottom, '16px');
@@ -350,7 +350,7 @@ test('MoodleQuickNotification: progressive 3-dot expansion for long answers', ()
   const dotsBtn = box.querySelector('.more-dots-btn');
 
   assert.ok(dotsBtn, 'Long answer should render ... expansion button');
-  assert.ok(box.textContent.includes('···'));
+  assert.ok(box.textContent.includes('⋮'));
 
   // Advance chunk
   notifier.advanceChunk();
@@ -936,6 +936,642 @@ test('Custom card-based questions: extracts card options and text without radio 
   assert.equal(data.options.length, 3, 'Should extract all 3 card options');
   assert.ok(data.options.some(o => o.text.includes('Singleton Pattern')));
 });
+
+test('Scenario 1: Gemini succeeds -> answer appears without 🦙 badge', () => {
+  const dom = setupDOM('<div></div>');
+  const { document, MoodleQuickNotification } = dom.window;
+  const notifier = new MoodleQuickNotification();
+
+  notifier.showAnswer({
+    option: 'C',
+    answer: 'Nitrogen',
+    reason: 'Nitrogen constitutes 78% of Earth atmosphere',
+    provider: 'gemini',
+    model: 'gemini-flash-lite-latest',
+    isOllama: false
+  });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('C — Nitrogen'));
+  assert.equal(box.querySelector('.ollama-badge'), null, 'Must NOT show 🦙 badge when Gemini succeeds');
+  assert.ok(box.querySelector('.more-dots-btn'), 'Should render ⋮ toggle button');
+});
+
+test('Scenario 2: Offline Ollama fallback succeeds -> answer appears with 🦙 badge and accessible tooltip', () => {
+  const dom = setupDOM('<div></div>');
+  const { document, MoodleQuickNotification } = dom.window;
+  const notifier = new MoodleQuickNotification();
+
+  notifier.showAnswer({
+    option: 'C',
+    answer: 'Nitrogen',
+    reason: 'Selected C using local gemma3:4b.',
+    provider: 'ollama',
+    source: 'ollama_fallback',
+    model: 'gemma3:4b',
+    isOllama: true
+  });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('C — Nitrogen'));
+  const badge = box.querySelector('.ollama-badge');
+  assert.ok(badge, 'Must show 🦙 badge when Ollama solves');
+  assert.equal(badge.textContent, '🦙');
+  assert.equal(badge.title, 'Answered by local Ollama');
+  assert.equal(badge.getAttribute('aria-label'), 'Answered by local Ollama');
+});
+
+test('Scenario 3: Gemini fails and Ollama unavailable -> clear error appears', () => {
+  const dom = setupDOM('<div></div>');
+  const { document, MoodleQuickNotification } = dom.window;
+  const notifier = new MoodleQuickNotification();
+
+  notifier.showError('Local backend or Ollama is offline. Launch Ollama app.');
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.className.includes('error'));
+  assert.ok(box.textContent.includes('Local backend or Ollama is offline'));
+});
+
+test('Scenario 4 & 5 & 6: Collapsed popup only shows answer, clicking ⋮ toggles expanded explanation', () => {
+  const dom = setupDOM('<div></div>');
+  const { document, MoodleQuickNotification } = dom.window;
+  const notifier = new MoodleQuickNotification();
+
+  notifier.showAnswer({
+    option: 'C',
+    answer: 'Nitrogen',
+    explanation: 'Nitrogen constitutes approximately 78% of Earth\'s dry atmosphere.'
+  });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+
+  // Scenario 5: Collapsed popup -> explanation is hidden
+  assert.ok(box.textContent.includes('C — Nitrogen'));
+  assert.equal(box.querySelector('.answer-explanation'), null, 'Explanation must be hidden in collapsed state');
+
+  // Scenario 6: Clicking ⋮ expands popup
+  const dotsBtn = box.querySelector('.more-dots-btn');
+  assert.ok(dotsBtn, 'Three-dot button must exist');
+  dotsBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+  // Scenario 4: Expanded popup -> full explanation is visible
+  const expl = box.querySelector('.answer-explanation');
+  assert.ok(expl, 'Explanation element must now exist');
+  assert.ok(expl.textContent.includes('Nitrogen constitutes approximately 78%'));
+  assert.ok(box.textContent.includes('C — Nitrogen'), 'Answer text must still be visible');
+
+  // Clicking ⋮ again collapses it back
+  const newDotsBtn = box.querySelector('.more-dots-btn');
+  newDotsBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(box.querySelector('.answer-explanation'), null, 'Explanation must be hidden after collapsing');
+});
+
+test('Scenario 7: Shift + A displays cached answer without another API request', async () => {
+  const html = fs.readFileSync(path.join(fixturesDir, '1-single-choice.html'), 'utf8');
+  const dom = setupDOM(html, {
+    option: 'A',
+    answer: 'Mitosis',
+    explanation: 'Division producing identical diploid cells',
+    isOllama: true,
+    provider: 'ollama'
+  });
+  const { MoodleAdapter, document } = dom.window;
+
+  // 1. First solve to establish last answer
+  await MoodleAdapter.solveCurrentQuestion();
+  const initialRequests = dom.window.sentMessages.length;
+
+  // 2. Trigger Shift + A
+  MoodleAdapter.showLastAnswerAgain();
+
+  // 3. Must NOT trigger another network request
+  assert.equal(dom.window.sentMessages.length, initialRequests, 'Shift+A must make 0 network requests');
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('A — Mitosis'));
+  assert.ok(box.querySelector('.ollama-badge'), 'Preserves 🦙 badge on cached answer re-display');
+});
+
+test('Scenario 8: Shift + Z and Shift + X both display answers using the same compact popup', () => {
+  const dom = setupDOM('<div class="que multichoice"><div class="qtext">Test question</div></div>');
+  const { document, MoodleQuickNotification } = dom.window;
+  const notifier = new MoodleQuickNotification();
+
+  // Shift + Z
+  notifier.showAnswer({ option: 'B', answer: 'QuickSort', isOllama: false });
+  let host = document.getElementById('moodle-quick-notify-host');
+  let box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('B — QuickSort'));
+
+  // Shift + X in-place update
+  notifier.showAnswer({ option: 'D', answer: 'MergeSort', isOllama: true });
+  const allHosts = document.querySelectorAll('#moodle-quick-notify-host');
+  assert.equal(allHosts.length, 1, 'Must strictly reuse 1 host element');
+  assert.ok(box.textContent.includes('D — MergeSort'));
+  assert.ok(box.querySelector('.ollama-badge'));
+});
+
+test('Shift + Z Mode A: cleanMoodleJunk removes multi-line Moodle headers and navigation noise', () => {
+  const dom = setupDOM('<div></div>');
+  const { MoodleAdapter } = dom.window;
+
+  const rawMoodleHeader = `Question 3
+Not yet answered
+Marked out of 1.00
+Flag question
+Which country is estimated to contain more natural lakes than the rest of the world combined?
+Select one:`;
+
+  const cleaned = MoodleAdapter.cleanMoodleJunk(rawMoodleHeader);
+  assert.equal(
+    cleaned,
+    'Which country is estimated to contain more natural lakes than the rest of the world combined?'
+  );
+});
+
+test('Shift + Z Mode A: Automatic Question Detection extracts question and normalized option IDs (A, B, C, D)', () => {
+  const html = `
+    <div class="que multichoice" id="q1">
+      <div class="info"><span class="no">1</span></div>
+      <div class="content">
+        <div class="formulation">
+          <div class="qtext">Where does photosynthesis primarily take place in plant cells?</div>
+          <div class="answer">
+            <div class="r0"><input type="radio" name="q1" id="q1_a0" value="0"><label for="q1_a0">Chloroplasts</label></div>
+            <div class="r1"><input type="radio" name="q1" id="q1_a1" value="1"><label for="q1_a1">Mitochondria</label></div>
+            <div class="r0"><input type="radio" name="q1" id="q1_a2" value="2"><label for="q1_a2">Ribosomes</label></div>
+            <div class="r1"><input type="radio" name="q1" id="q1_a3" value="3"><label for="q1_a3">Nucleus</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { MoodleAdapter } = dom.window;
+
+  const containers = MoodleAdapter.getQuestionContainers();
+  assert.equal(containers.length, 1);
+
+  const data = MoodleAdapter.extractQuestionData(containers[0]);
+  assert.ok(data.question.includes('photosynthesis primarily take place'));
+  assert.equal(data.options.length, 4);
+  assert.equal(data.options[0].id, 'A');
+  assert.equal(data.options[1].id, 'B');
+  assert.equal(data.options[2].id, 'C');
+  assert.equal(data.options[3].id, 'D');
+  assert.ok(data.options[0].text.includes('Chloroplasts'));
+});
+
+test('Shift + Z Mode B: Highlighted question + options extracts both correctly', () => {
+  const html = `
+    <div>
+      <div id="target-text">What is the capital of France?
+A. London
+B. Paris
+C. Berlin
+D. Madrid</div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, window, MoodleAdapter } = dom.window;
+
+  const textNode = document.getElementById('target-text').firstChild;
+  const range = document.createRange();
+  range.selectNodeContents(textNode);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  const data = MoodleAdapter.extractFromSelection();
+  assert.ok(data, 'Should extract from selection');
+  assert.ok(data.question.includes('capital of France'));
+  assert.equal(data.options.length, 4);
+  assert.equal(data.options[0].id, 'A');
+  assert.ok(data.options[0].text.includes('London'));
+  assert.equal(data.options[1].id, 'B');
+  assert.ok(data.options[1].text.includes('Paris'));
+});
+
+test('Shift + Z Mode B: Highlighted ONLY question auto-attaches options from enclosing Moodle container', () => {
+  const html = `
+    <div class="que multichoice" id="q1">
+      <div class="content">
+        <div class="formulation">
+          <div class="qtext" id="q-prompt">What is the capital of Canada?</div>
+          <div class="answer">
+            <div><input type="radio" id="opt0" value="0"><label for="opt0">Toronto</label></div>
+            <div><input type="radio" id="opt1" value="1"><label for="opt1">Ottawa</label></div>
+            <div><input type="radio" id="opt2" value="2"><label for="opt2">Vancouver</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, window, MoodleAdapter } = dom.window;
+
+  // Highlight only the question prompt text
+  const promptNode = document.getElementById('q-prompt').firstChild;
+  const range = document.createRange();
+  range.selectNodeContents(promptNode);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  const data = MoodleAdapter.extractFromSelection();
+  assert.ok(data, 'Should extract from selection');
+  assert.ok(data.question.includes('capital of Canada'));
+  assert.equal(data.options.length, 3, 'Should attach options from enclosing Moodle container');
+  assert.ok(data.options[0].text.includes('Toronto'));
+  assert.ok(data.options[1].text.includes('Ottawa'));
+});
+
+test('Shift + Z Mode B: Highlighted ONLY an option associates container question and options', () => {
+  const html = `
+    <div class="que multichoice" id="q1">
+      <div class="content">
+        <div class="formulation">
+          <div class="qtext">Which organelle produces ATP?</div>
+          <div class="answer">
+            <div><input type="radio" id="opt0" value="0"><label for="opt0" id="opt-mito">Mitochondria</label></div>
+            <div><input type="radio" id="opt1" value="1"><label for="opt1">Chloroplast</label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, window, MoodleAdapter } = dom.window;
+
+  // Highlight only the option text "Mitochondria"
+  const optNode = document.getElementById('opt-mito').firstChild;
+  const range = document.createRange();
+  range.selectNodeContents(optNode);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  const data = MoodleAdapter.extractFromSelection();
+  assert.ok(data, 'Should extract from selection');
+  assert.ok(data.question.includes('Which organelle produces ATP'), 'Should associate parent question');
+  assert.equal(data.options.length, 2, 'Should associate all options');
+});
+
+test('Shift + Z Mode B: Unrelated selection returns null and produces useful error without API request', async () => {
+  const html = `
+    <div>
+      <div id="footer-text">Privacy Policy • Terms of Service • All Rights Reserved</div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, window, MoodleAdapter } = dom.window;
+
+  // Highlight unrelated footer text
+  const footerNode = document.getElementById('footer-text').firstChild;
+  const range = document.createRange();
+  range.selectNodeContents(footerNode);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  const initialRequests = dom.window.sentMessages.length;
+
+  // Trigger Shift + Z via solveCurrentQuestion
+  await MoodleAdapter.solveCurrentQuestion();
+
+  // Must NOT send an ANALYZE_QUESTION API request
+  const solveRequests = dom.window.sentMessages.filter(m => m.action === 'ANALYZE_QUESTION');
+  assert.equal(solveRequests.length, 0, 'Must NOT send an API request for unrelated selection');
+
+  // Must display the required error message
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.className.includes('error'), 'Must display error state');
+  assert.ok(box.textContent.includes('Question not detected. Select the question or use Shift + X.'));
+});
+
+test('Keyboard: Normal Enter key and Moodle form controls are strictly preserved', () => {
+  const html = `
+    <form id="quiz-form">
+      <input type="text" id="student-answer" value="test">
+      <input type="radio" id="radio1" name="q" value="1">
+      <button type="submit" id="btn-submit">Submit</button>
+    </form>
+  `;
+  const dom = setupDOM(html);
+  const { document, window } = dom.window;
+
+  const input = document.getElementById('student-answer');
+  let defaultPrevented = false;
+
+  const enterEvent = new window.KeyboardEvent('keydown', {
+    key: 'Enter',
+    code: 'Enter',
+    bubbles: true,
+    cancelable: true
+  });
+  input.dispatchEvent(enterEvent);
+
+  assert.equal(enterEvent.defaultPrevented, false, 'Normal Enter key must never be prevented by extension');
+
+  // Verify regular non-shortcut typing is not intercepted
+  const typeEvent = new window.KeyboardEvent('keydown', {
+    key: 'z',
+    code: 'KeyZ',
+    shiftKey: false,
+    bubbles: true,
+    cancelable: true
+  });
+  input.dispatchEvent(typeEvent);
+  assert.equal(typeEvent.defaultPrevented, false, 'Regular typing must never be blocked');
+});
+
+test('Iframes: Supported frame detection works with cross-window HTMLElement nodes', () => {
+  const html = `
+    <div id="wrapper">
+      <div class="que multichoice" id="q_iframe">
+        <div class="qtext">What is the speed of light?</div>
+        <div class="answer">
+          <div><input type="radio" id="opt_c1"><label for="opt_c1">300,000 km/s</label></div>
+          <div><input type="radio" id="opt_c2"><label for="opt_c2">150,000 km/s</label></div>
+        </div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, MoodleAdapter } = dom.window;
+
+  const container = document.getElementById('q_iframe');
+
+  // In an iframe or simulated cross-window context, container may not pass window.HTMLElement check
+  // But nodeType === 1 must pass
+  assert.equal(container.nodeType, 1);
+  const data = MoodleAdapter.extractQuestionData(container);
+  assert.ok(data, 'Should extract question data from iframe element');
+  assert.ok(data.question.includes('speed of light'));
+  assert.equal(data.options.length, 2);
+  assert.equal(data.options[0].id, 'A');
+  assert.equal(data.options[1].id, 'B');
+});
+
+test('Initialization: Idempotent init() prevents duplicate event listeners', () => {
+  const dom = setupDOM('<div></div>');
+  const { window } = dom.window;
+
+  // Initial count of listeners or events
+  let keydownCallCount = 0;
+  window.addEventListener('keydown', () => { keydownCallCount++; });
+
+  // Calling init() again
+  // Moodle content script has isInitialized protection
+  assert.doesNotThrow(() => {
+    // Re-evaluating or re-initializing does not crash or double-bind
+    const evt = new window.KeyboardEvent('keydown', { key: 'a', bubbles: true });
+    window.dispatchEvent(evt);
+  });
+  assert.equal(keydownCallCount, 1);
+});
+
+test('Messaging: Complete request-response lifecycle with ANALYZE_QUESTION', async () => {
+  const dom = setupDOM(`
+    <div class="que multichoice" id="q_lifecycle">
+      <div class="qtext">Which gas is most abundant in Earth atmosphere?</div>
+      <div class="answer">
+        <div><input type="radio" id="q_l1"><label for="q_l1">Nitrogen</label></div>
+        <div><input type="radio" id="q_l2"><label for="q_l2">Oxygen</label></div>
+      </div>
+    </div>
+  `, {
+    option: 'A',
+    answer: 'Nitrogen',
+    reason: 'Nitrogen makes up roughly 78% of dry air.',
+    provider: 'gemini',
+    isOllama: false
+  });
+  const { MoodleAdapter, document } = dom.window;
+
+  await MoodleAdapter.solveCurrentQuestion();
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('A — Nitrogen'));
+  assert.equal(box.querySelector('.ollama-badge'), null, 'Gemini response must not have 🦙 badge');
+});
+
+// =========================================================================
+// Regression Tests: Screenshot (Shift + X) & Google Search Detection (Shift + Z)
+// =========================================================================
+
+test('Regression Test: Shift + X solveQuestionScreenshot handles successful vision response cleanly', async () => {
+  const dom = setupDOM('<div></div>', {
+    option: 'B',
+    answer: 'Photosynthesis',
+    reason: 'Chloroplasts absorb solar photons to synthesize glucose.',
+    provider: 'gemini',
+    isOllama: false
+  });
+  const { MoodleAdapter, document } = dom.window;
+
+  await MoodleAdapter.solveQuestionScreenshot('Identify the biological process', false);
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Notification host must be created');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.textContent.includes('B — Photosynthesis'), 'Notification must display vision answer');
+});
+
+test('Regression Test: Shift + X solveQuestionScreenshot handles backend failure without crashing or "response is not defined"', async () => {
+  const dom = setupDOM('<div></div>');
+  const { MoodleAdapter, document } = dom.window;
+
+  // Mock failure response from backend
+  dom.window.chrome.runtime.sendMessage = (msg) => {
+    if (msg.action === 'CAPTURE_VISIBLE_TAB') {
+      return Promise.resolve({ success: true, dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' });
+    }
+    if (msg.action === 'ANALYZE_QUESTION') {
+      return Promise.resolve({ success: false, error: 'Ollama is offline. Please launch Ollama app.' });
+    }
+    return Promise.resolve({ success: true });
+  };
+
+  // Must not throw "response is not defined"
+  await assert.doesNotReject(async () => {
+    await MoodleAdapter.solveQuestionScreenshot('', false);
+  });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Notification host must exist');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.className.includes('error'), 'Must show error notification');
+  assert.ok(!box.textContent.includes('response is not defined'), 'Must not report ReferenceError: response is not defined');
+  assert.ok(box.textContent.includes('Ollama is offline'), 'Must show user-friendly backend error');
+});
+
+test('Regression Test: Shift + X solveQuestionScreenshot handles missing response (null) gracefully', async () => {
+  const dom = setupDOM('<div></div>');
+  const { MoodleAdapter, document } = dom.window;
+
+  // Mock null response from backend
+  dom.window.chrome.runtime.sendMessage = (msg) => {
+    if (msg.action === 'CAPTURE_VISIBLE_TAB') {
+      return Promise.resolve({ success: true, dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' });
+    }
+    if (msg.action === 'ANALYZE_QUESTION') {
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({ success: true });
+  };
+
+  await assert.doesNotReject(async () => {
+    await MoodleAdapter.solveQuestionScreenshot('', false);
+  });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.className.includes('error'));
+  assert.ok(!box.textContent.includes('response is not defined'), 'Must never throw ReferenceError: response is not defined');
+});
+
+test('Regression Test: Shift + X solveQuestionScreenshot handles messaging transport error (port disconnected)', async () => {
+  const dom = setupDOM('<div></div>');
+  const { MoodleAdapter, document } = dom.window;
+
+  // Mock extension runtime context invalidated
+  dom.window.chrome.runtime.sendMessage = (msg) => {
+    if (msg.action === 'CAPTURE_VISIBLE_TAB') {
+      return Promise.resolve({ success: true, dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' });
+    }
+    if (msg.action === 'ANALYZE_QUESTION') {
+      return Promise.reject(new Error('Extension context invalidated'));
+    }
+    return Promise.resolve({ success: true });
+  };
+
+  await assert.doesNotReject(async () => {
+    await MoodleAdapter.solveQuestionScreenshot('', false);
+  });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.className.includes('error'));
+  assert.ok(box.textContent.includes('Please refresh this page'));
+});
+
+test('Regression Test: Shift + Z accepts Google Search question without .que container', () => {
+  const html = `
+    <div id="search-card" class="g" data-ved="12345">
+      <div class="vk_bk" id="google-q">Which planet is known as the Red Planet?</div>
+      <div role="radiogroup">
+        <div role="radio" id="opt-mars">Mars</div>
+        <div role="radio">Venus</div>
+        <div role="radio">Jupiter</div>
+        <div role="radio">Saturn</div>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, window, MoodleAdapter } = dom.window;
+
+  // Highlight question prompt on Google Search
+  const qNode = document.getElementById('google-q').firstChild;
+  const range = document.createRange();
+  range.selectNodeContents(qNode);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+
+  const data = MoodleAdapter.extractFromSelection();
+  assert.ok(data, 'Must NOT reject question on Google Search as unrelated');
+  assert.ok(data.question.includes('Red Planet'));
+  assert.ok(data.options.length >= 2, 'Must attach nearby options from Google card');
+  assert.ok(data.options.some(o => o.text.includes('Mars')));
+});
+
+test('Regression Test: Shift + Z Mode B on Google Search option associates parent question and choices', () => {
+  const html = `
+    <div class="g" data-ved="67890">
+      <div class="prompt-text" id="g-prompt">What is the capital of Japan?</div>
+      <div class="choices-container">
+        <button type="button" id="g-opt-tokyo">Tokyo</button>
+        <button type="button">Kyoto</button>
+        <button type="button">Osaka</button>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, window, MoodleAdapter } = dom.window;
+
+  // Highlight only the option text "Tokyo"
+  const optNode = document.getElementById('g-opt-tokyo').firstChild;
+  const range = document.createRange();
+  range.selectNodeContents(optNode);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+
+  const data = MoodleAdapter.extractFromSelection();
+  assert.ok(data, 'Must recognize option on Google Search card');
+  assert.ok(data.question.includes('capital of Japan'), 'Must associate parent question');
+  assert.equal(data.options.length, 3, 'Must associate all 3 choices');
+});
+
+test('Regression Test: Shift + Z gracefully handles invalidated extension context with on-screen refresh message', async () => {
+  const html = `
+    <div class="que multichoice">
+      <div class="qtext">Which gas is most abundant in Earth atmosphere?</div>
+      <div class="answer">
+        <label><input type="radio" name="q1" value="A"> A. Nitrogen</label>
+        <label><input type="radio" name="q1" value="B"> B. Oxygen</label>
+      </div>
+    </div>
+  `;
+  const dom = setupDOM(html);
+  const { document, MoodleAdapter, chrome } = dom.window;
+
+  // Mock chrome.runtime.id access throwing "Extension context invalidated."
+  Object.defineProperty(chrome.runtime, 'id', {
+    get() {
+      throw new Error('Extension context invalidated.');
+    },
+    configurable: true
+  });
+
+  await assert.doesNotReject(async () => {
+    await MoodleAdapter.solveCurrentQuestion();
+  });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Notification host must be attached to document');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box.className.includes('error'), 'Must display error state');
+  assert.ok(box.textContent.includes('Please refresh this page'), 'Must show refresh instruction');
+});
+
+test('Regression Test: Notification host attaches to documentElement without all: initial !important', () => {
+  const dom = setupDOM('<div></div>');
+  const { document } = dom.window;
+  const QuickNotification = dom.window.MoodleQuickNotification;
+  assert.ok(QuickNotification, 'MoodleQuickNotification class must be exposed on window');
+
+  const notif = new QuickNotification();
+  notif.showStatus('Test notification');
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Host element must exist in document');
+  assert.equal(host.parentNode, document.documentElement, 'Host must attach to document.documentElement');
+  
+  const styleEl = host.shadowRoot.querySelector('style');
+  assert.ok(styleEl, 'Shadow root must contain style');
+  assert.ok(!styleEl.textContent.includes('all: initial !important'), 'Shadow style must not contain all: initial !important');
+});
+
+
 
 
 

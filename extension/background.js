@@ -208,6 +208,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'ANALYZE_QUESTION') {
+    console.log('[Moodle AI] BACKGROUND_MESSAGE_RECEIVED:', { action: message.action });
+    console.log('[Moodle AI Diagnostic 9/14] Background message received:', { action: message.action });
     handleAnalyzeQuestion(message.payload)
       .then(sendResponse)
       .catch((err) => {
@@ -337,8 +339,21 @@ async function handleAnalyzeQuestion(payload) {
   const selectedProvider = payload.provider || storage.activeProvider || 'gemini_1';
 
   let targetEndpoint;
-  let timeoutMs = 55000;
+  let timeoutMs = 25000;
   let isLocalOllama = false;
+
+  console.log('[Moodle AI Diagnostic 10/14] Provider selected:', { provider: selectedProvider });
+
+  // If local Ollama is active on user machine, use an agile 8s cloud timeout for instant seamless fallback!
+  if (selectedProvider !== 'ollama') {
+    try {
+      const checkOllamaHost = (storage.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+      const fastPing = await fetch(`${checkOllamaHost}/api/tags`, { signal: AbortSignal.timeout(600) }).catch(() => null);
+      if (fastPing && fastPing.ok) {
+        timeoutMs = 8000;
+      }
+    } catch (_) {}
+  }
 
   // Secure cloud routing: Keys are managed safely on Render server environment variables
   // or user-configured custom keys. No secrets are hardcoded in client code.
@@ -397,8 +412,9 @@ async function handleAnalyzeQuestion(payload) {
   // Abort timeout
   const timeoutId = setTimeout(() => currentController.abort(), timeoutMs);
 
+  let response = null;
   try {
-    const response = await fetch(targetEndpoint, {
+    response = await fetch(targetEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -412,6 +428,12 @@ async function handleAnalyzeQuestion(payload) {
       activeRequestController = null;
     }
 
+    console.log('[Moodle AI Diagnostic 11/14] Provider request:', {
+      endpoint: targetEndpoint.replace(/^https?:\/\/[^\/]+/, ''),
+      status: response ? response.status : undefined,
+      ok: response ? response.ok : false
+    });
+
     if (!response.ok) {
       const errJson = await response.json().catch(() => ({}));
       throw new Error(errJson.message || errJson.error || `HTTP ${response.status}`);
@@ -423,9 +445,25 @@ async function handleAnalyzeQuestion(payload) {
     } else {
       await updateRealUsageStats({ provider: payload.provider || storage.activeProvider, totalTokens: 140 });
     }
-    return { success: true, data };
+    return {
+      success: true,
+      data: {
+        ...data,
+        isOllama: false,
+        source: 'cloud'
+      }
+    };
   } catch (error) {
     clearTimeout(timeoutId);
+    if (activeRequestController === currentController) {
+      activeRequestController = null;
+    }
+
+    console.log('[Moodle AI Diagnostic 11/14] Provider request:', {
+      endpoint: targetEndpoint.replace(/^https?:\/\/[^\/]+/, ''),
+      status: response ? response.status : undefined,
+      ok: response ? response.ok : false
+    });
 
     // Auto-probe alternate port 3000/3001 if connection refused
     if (isLocalOllama && (targetEndpoint.includes(':3000') || targetEndpoint.includes(':3001'))) {
@@ -451,7 +489,15 @@ async function handleAnalyzeQuestion(payload) {
     if (isLocalOllama) {
       try {
         const directData = await runDirectOllamaSolve(payload, payload.ollamaUrl, payload.model);
-        return { success: true, data: directData };
+        return {
+          success: true,
+          data: {
+            ...directData,
+            isOllama: true,
+            provider: 'ollama',
+            source: 'ollama'
+          }
+        };
       } catch (directErr) {
         console.warn('[Direct Ollama Failed]:', directErr.message);
         let cleanErr = directErr.message || 'Local Ollama evaluation failed';
@@ -496,7 +542,6 @@ async function handleAnalyzeQuestion(payload) {
         });
         if (fallbackRes.ok) {
           const fallbackData = await fallbackRes.json();
-          await chrome.storage.local.set({ activeProvider: 'gemini_1' });
           if (fallbackData && fallbackData.realUsage) {
             await updateRealUsageStats(fallbackData.realUsage);
           }
@@ -513,16 +558,25 @@ async function handleAnalyzeQuestion(payload) {
       const ollamaHost = (storage.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
       const localModel = storage.ollamaSelectedModel || 'gemma3:4b';
       try {
-        const pingOllama = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(1500) });
+        const pingOllama = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) });
         if (pingOllama.ok) {
           console.warn(`[Background] Cloud request encountered issue (${error.message}). Seamlessly resolving via local Ollama (${localModel})...`);
           const directData = await runDirectOllamaSolve(payload, ollamaHost, localModel);
-          if (directData && directData.answer) {
-            return { success: true, data: { ...directData, source: 'ollama_fallback' } };
+          if (directData && (directData.answer || directData.option)) {
+            return {
+              success: true,
+              data: {
+                ...directData,
+                source: 'ollama_fallback',
+                provider: 'ollama',
+                isFallback: true,
+                isOllama: true
+              }
+            };
           }
         }
       } catch (ollamaPingErr) {
-        // Local Ollama offline or unreachable, proceed to standard cloud error
+        console.warn('[Background] Local Ollama fallback unavailable:', ollamaPingErr.message);
       }
     }
 
@@ -624,10 +678,13 @@ function extractJSON(text) {
 
 async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434', modelName) {
   const baseUrl = (ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-  let model = modelName || payload.model;
+  let model = modelName;
+  if (!model && payload.provider === 'ollama') {
+    model = payload.model;
+  }
 
-  // Auto-detect installed model if none selected
-  if (!model) {
+  // Auto-detect installed model if none selected or if model was a cloud model name (e.g. gemini/gpt)
+  if (!model || model.includes('gemini') || model.includes('gpt') || model.includes('claude')) {
     try {
       const tagsRes = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
       if (tagsRes.ok) {
@@ -639,6 +696,8 @@ async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434
       }
     } catch (_) {}
   }
+
+  if (!model) model = 'gemma3:4b';
 
   if (!model) throw new Error('No local Ollama model found');
 

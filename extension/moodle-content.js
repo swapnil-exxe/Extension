@@ -7,8 +7,42 @@
 (function () {
   'use strict';
 
-  if (window.__moodleQuickAIInitialized) return;
-  window.__moodleQuickAIInitialized = true;
+  let activeKeydownListener = null;
+  let activeMouseMoveListener = null;
+
+  if (typeof window.__moodleQuickAICleanup === 'function') {
+    try {
+      window.__moodleQuickAICleanup();
+    } catch (_) {}
+  }
+
+  window.__moodleQuickAICleanup = function () {
+    try {
+      if (activeKeydownListener) {
+        window.removeEventListener('keydown', activeKeydownListener, true);
+        activeKeydownListener = null;
+      }
+      if (activeMouseMoveListener) {
+        document.removeEventListener('mousemove', activeMouseMoveListener, { passive: true });
+        activeMouseMoveListener = null;
+      }
+    } catch (_) {}
+  };
+
+  function isExtensionContextValid() {
+    try {
+      if (typeof chrome === 'undefined' || !chrome.runtime) return false;
+      // In real Chrome, reading chrome.runtime.id throws "Extension context invalidated." if context is dead
+      const id = chrome.runtime.id;
+      // In Node.js test mocks chrome.runtime.id may be undefined
+      if (typeof id === 'undefined') {
+        return typeof chrome.runtime.sendMessage === 'function';
+      }
+      return Boolean(id);
+    } catch (_) {
+      return false;
+    }
+  }
 
   // In-memory state
   let notification = null;
@@ -24,13 +58,27 @@
   let currentRequestId = 0;
   const DEBOUNCE_MS = 250;
 
+  let isInitialized = false;
+
+  function getNotification() {
+    if (!notification && window.MoodleQuickNotification) {
+      notification = new window.MoodleQuickNotification();
+    }
+    return notification;
+  }
+
   /**
    * Initialize content script adapter
    */
   async function init() {
-    if (window.MoodleQuickNotification) {
-      notification = new window.MoodleQuickNotification();
-    }
+    if (isInitialized) return;
+    isInitialized = true;
+    notification = getNotification();
+
+    // Attach listeners immediately so shortcuts work without waiting for storage I/O
+    attachMouseAndFocusTracking();
+    attachKeyboardShortcuts();
+    attachMessageListener();
 
     try {
       const settings = await chrome.storage.local.get(['enabled', 'notificationPosition', 'notificationDuration']);
@@ -43,10 +91,6 @@
       }
     } catch (err) {}
 
-    attachMouseAndFocusTracking();
-    attachKeyboardShortcuts();
-    attachMessageListener();
-
     console.log('[Moodle Quick AI] Ready. Shortcuts: Shift+Z, Shift+X, Shift+A.');
   }
 
@@ -54,23 +98,31 @@
    * Track mouse position and focus to detect active question under cursor
    */
   function attachMouseAndFocusTracking() {
-    document.addEventListener('mousemove', (e) => {
+    if (activeMouseMoveListener) {
+      document.removeEventListener('mousemove', activeMouseMoveListener, { passive: true });
+    }
+    activeMouseMoveListener = (e) => {
       elementUnderMouse = e.target;
-    }, { passive: true });
+    };
+    document.addEventListener('mousemove', activeMouseMoveListener, { passive: true });
 
     document.addEventListener('mouseover', (e) => {
       elementUnderMouse = e.target;
     }, { passive: true });
 
     document.addEventListener('focusin', (e) => {
-      const container = findQuestionContainerFromElement(e.target);
-      if (container) activeQuestionElement = container;
-    }, true);
+      if (e.target && e.target.closest) {
+        const que = e.target.closest('.que, .question, [data-question-id], [class*="question" i], [class*="quiz" i]');
+        if (que) activeQuestionElement = que;
+      }
+    }, { passive: true });
 
     document.addEventListener('click', (e) => {
-      const container = findQuestionContainerFromElement(e.target);
-      if (container) activeQuestionElement = container;
-    }, true);
+      if (e.target && e.target.closest) {
+        const que = e.target.closest('.que, .question, [data-question-id], [class*="question" i], [class*="quiz" i]');
+        if (que) activeQuestionElement = que;
+      }
+    }, { passive: true });
   }
 
   /**
@@ -86,7 +138,35 @@
   }
 
   /**
-   * Extract question and options directly from user's highlighted text selection ONLY
+   * Helper to clean irrelevant Moodle UI noise (status, grade, flag, navigation)
+   */
+  function cleanMoodleJunk(text) {
+    if (!text || typeof text !== 'string') return '';
+    const lines = text.split('\n');
+    const cleaned = [];
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) continue;
+      // Filter out pure Moodle meta lines
+      if (/^(?:Question\s*\d*[\.\:]?|Not yet answered|Marked out of\s*\d*(?:\.\d+)?|Flag question|Select one(?:\s+or\s+more)?\:?|Clear my choice|State\:.*|Grade\:.*|Points(?:\s+out\s+of)?.*|Edit question|Time left.*)$/i.test(trimmed)) {
+        continue;
+      }
+      // Strip leading/trailing Moodle UI prefixes within text lines
+      let l = trimmed
+        .replace(/^Question\s*\d+[\.\:\s\-]*/i, '')
+        .replace(/^Not yet answered\s*/i, '')
+        .replace(/^Marked out of\s*\d+(?:\.\d+)?\s*/i, '')
+        .replace(/^Flag question\s*/i, '')
+        .replace(/^Select one(?:\s+or\s+more)?\:?\s*/i, '')
+        .replace(/Clear my choice\s*$/i, '')
+        .trim();
+      if (l) cleaned.push(l);
+    }
+    return cleaned.join('\n');
+  }
+
+  /**
+   * Extract question and options directly from user's highlighted text selection (Mode B)
    */
   function extractFromSelection() {
     const selection = window.getSelection();
@@ -95,7 +175,8 @@
     const rawText = selection.toString().trim();
     if (!rawText || rawText.length < 2) return null;
 
-    const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+    const cleanedText = cleanMoodleJunk(rawText);
+    const lines = cleanedText.split('\n').map(l => l.trim()).filter(Boolean);
 
     // Check if selected text contains option lines
     function isOptionLine(line) {
@@ -103,11 +184,29 @@
              /^(?:True|False)$/i.test(line);
     }
 
-    // Case A: User selected BOTH question and options lines
+    // Anchor element to locate enclosing question container on page
+    let anchorEl = null;
+    try {
+      if (selection.anchorNode) {
+        anchorEl = selection.anchorNode.nodeType === Node.ELEMENT_NODE
+          ? selection.anchorNode
+          : selection.anchorNode.parentElement;
+      }
+    } catch (_) {}
+
+    const container = findQuestionContainerFromElement(anchorEl) || activeQuestionElement;
+    let containerData = null;
+    if (container) {
+      try {
+        containerData = extractQuestionData(container);
+      } catch (_) {}
+    }
+
+    // Case 1: User selected BOTH question and options lines
     if (lines.length >= 2) {
       const firstOptIndex = lines.findIndex((l, i) => i > 0 && isOptionLine(l));
       if (firstOptIndex > 0) {
-        const questionText = lines.slice(0, firstOptIndex).join(' ');
+        const questionText = cleanMoodleJunk(lines.slice(0, firstOptIndex).join(' '));
         const optionLines = lines.slice(firstOptIndex);
         const options = optionLines.map((optText, idx) => {
           let text = optText;
@@ -124,6 +223,7 @@
           };
         });
 
+        console.log('[Moodle AI] Mode B: Both question and options selected from highlight:', { question: questionText, options: options.length });
         return {
           platform: 'moodle',
           questionNumber: (questionText.match(/^\d+/) || ['1'])[0],
@@ -134,27 +234,81 @@
       }
     }
 
-    // Case B: User selected only the question text
-    // Check if the enclosing question container on the page contains options!
+    // Case 2: User selected ONLY an option (or option label was clicked/highlighted)
+    if (containerData && containerData.options && containerData.options.length >= 2) {
+      const selNormalized = cleanedText.replace(/^[A-Za-z0-9]+[\.\:\)\-]\s*/, '').trim().toLowerCase();
+      const matchesOption = containerData.options.some(opt => {
+        const optNorm = opt.text.replace(/^[A-Za-z0-9]+[\.\:\)\-]\s*/, '').trim().toLowerCase();
+        return optNorm.includes(selNormalized) || selNormalized.includes(optNorm);
+      });
+      const insideAnswerEl = anchorEl && Boolean(anchorEl.closest('.answer, [class*="option" i], [class*="choice" i], label, [role="radio"], [role="button"], button'));
+
+      if ((matchesOption || insideAnswerEl) && containerData.question && containerData.question.length > 5) {
+        console.log('[Moodle AI] Mode B: Highlight matched option -> Enclosing question and options associated:', {
+          question: containerData.question,
+          options: containerData.options.length
+        });
+        return {
+          platform: 'moodle',
+          questionNumber: containerData.questionNumber || '1',
+          questionType: containerData.questionType || 'single_choice',
+          question: containerData.question,
+          options: containerData.options
+        };
+      }
+    }
+
+    // Case 3: User selected question text - find nearby options
     let pageOptions = [];
-    try {
-      const anchorEl = selection.anchorNode
-        ? (selection.anchorNode.nodeType === Node.ELEMENT_NODE ? selection.anchorNode : selection.anchorNode.parentElement)
-        : null;
-      const container = findQuestionContainerFromElement(anchorEl) || activeQuestionElement;
-      if (container) {
-        const extracted = extractQuestionData(container);
-        if (extracted && extracted.options && extracted.options.length >= 2) {
-          pageOptions = extracted.options;
+    if (containerData && containerData.options && containerData.options.length >= 2) {
+      pageOptions = containerData.options;
+    } else if (anchorEl) {
+      // Opportunistically look for nearby options in parent / sibling elements (Google Search, web quiz cards)
+      let searchRoot = anchorEl;
+      let depth = 0;
+      while (searchRoot && searchRoot !== document.body && depth < 12) {
+        depth++;
+        const foundData = extractQuestionData(searchRoot);
+        if (foundData && foundData.options && foundData.options.length >= 2) {
+          pageOptions = foundData.options;
+          break;
+        }
+        searchRoot = searchRoot.parentElement;
+      }
+
+      // Check following sibling elements for an options list or option buttons
+      if (pageOptions.length === 0 && anchorEl.parentElement) {
+        let sibling = anchorEl.parentElement.nextElementSibling || anchorEl.nextElementSibling;
+        let sCount = 0;
+        while (sibling && sCount < 5) {
+          sCount++;
+          const sibData = extractQuestionData(sibling);
+          if (sibData && sibData.options && sibData.options.length >= 2) {
+            pageOptions = sibData.options;
+            break;
+          }
+          sibling = sibling.nextElementSibling;
         }
       }
-    } catch (e) {}
+    }
+
+    // Reject pure website boilerplate (Privacy Policy, Terms of Service, Copyright, etc.) or empty strings
+    const isBoilerplate = /^(?:privacy\s+policy|terms\s+(?:of\s+service|and\s+conditions)|all\s+rights\s+reserved|copyright|about\s+us|contact\s+us|login|sign\s+in|logout|sign\s+up|home|dashboard|navigation)\b/i.test(cleanedText);
+    if (isBoilerplate || cleanedText.length < 4) {
+      console.warn('[Moodle AI Diagnostic 3/14] Selection detected as unrelated content (rejected):', cleanedText.slice(0, 50));
+      return null;
+    }
+
+    console.log('[Moodle AI Diagnostic 5/14] Question extracted via Mode B (Selection):', {
+      question: cleanedText.slice(0, 60),
+      optionsAttached: pageOptions.length
+    });
 
     return {
       platform: 'moodle',
-      questionNumber: (rawText.match(/^\d+/) || ['1'])[0],
+      questionNumber: (cleanedText.match(/^\d+/) || ['1'])[0],
       questionType: pageOptions.length > 0 ? 'single_choice' : 'short_answer',
-      question: rawText,
+      question: cleanedText,
       options: pageOptions
     };
   }
@@ -192,12 +346,18 @@
     const moodleQue = el.closest('.que, [data-question-id], .formulation, .question, [class*="question-container"], [class*="quiz-question"], [class*="quiz-card"], [class*="question-card"], [class*="Question"]');
     if (moodleQue) return moodleQue.closest('.que') || moodleQue;
 
+    // Google practice problems, search widgets, knowledge panels, interactive quiz cards
+    const widgetCard = el.closest('[data-ved], .g, [jscontroller], [data-hveid], [class*="practice" i], [class*="problem" i], [class*="widget" i]');
+    if (widgetCard && widgetCard !== document.body && widgetCard.querySelectorAll('button, [role="button"], [role="radio"], label, li, [class*="option" i], [class*="choice" i]').length >= 2) {
+      return widgetCard;
+    }
+
     // 2. Climb up parent chain looking for any container containing options
     let curr = el;
     let bestContainer = null;
     let depth = 0;
 
-    while (curr && curr !== document.body && depth < 8) {
+    while (curr && curr !== document.body && depth < 16) {
       depth++;
       const inputs = curr.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
       if (inputs.length >= 2 && inputs.length <= 25) {
@@ -208,8 +368,22 @@
         }
       }
 
+      // Check button-based or custom card-based options (Google practice quiz, custom web apps)
+      const customOpts = curr.querySelectorAll('button, [role="button"], label, [class*="option" i], [class*="choice" i], [class*="answer" i], [class*="card" i]');
+      if (customOpts.length >= 2 && customOpts.length <= 25) {
+        const textOpts = Array.from(customOpts).filter(c => {
+          const t = c.textContent.trim();
+          return t.length > 0 && t.length < 250;
+        });
+        if (textOpts.length >= 2) {
+          bestContainer = curr;
+          const hasPrompt = curr.querySelector('h1, h2, h3, h4, h5, h6, [class*="title" i], [class*="prompt" i], [class*="text" i], [class*="question" i], p');
+          if (hasPrompt) return curr;
+        }
+      }
+
       const className = typeof curr.className === 'string' ? curr.className : '';
-      if (/card|box|item|block|form-group|fieldset/i.test(className) && inputs.length >= 1) {
+      if (/card|box|item|block|form-group|fieldset|widget|result|section/i.test(className) && (inputs.length >= 1 || customOpts.length >= 2)) {
         return curr;
       }
 
@@ -233,26 +407,27 @@
   }
 
   /**
-   * Helper to determine if an element is genuinely visible on page
+   * Helper to determine if an element is genuinely visible on page (supports iframes & shadow DOM)
    */
   function isElementVisible(el) {
-    if (!el || !(el instanceof HTMLElement)) return false;
+    if (!el || el.nodeType !== 1) return false;
     if (el.hidden || el.getAttribute('aria-hidden') === 'true') return false;
 
-    if (typeof window.getComputedStyle === 'function') {
-      try {
-        const style = window.getComputedStyle(el);
+    try {
+      const win = el.ownerDocument?.defaultView || window;
+      if (typeof win.getComputedStyle === 'function') {
+        const style = win.getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') {
           return false;
         }
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
 
     const isJSDOM = typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent || '');
     if (!isJSDOM) {
       const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
       if (rect && rect.width === 0 && rect.height === 0) {
-        return false;
+        if (el.children.length === 0) return false;
       }
     }
 
@@ -768,38 +943,28 @@
 
     // 1. Question Text
     let questionText = '';
-    const qtextElem = questionEl.querySelector('[class*="quizQuestionTextContainer" i] [class*="question" i]') ||
+    const qtextElem = questionEl.querySelector('.qtext') ||
+                      questionEl.querySelector('[class*="quizQuestionTextContainer" i] [class*="question" i]') ||
                       questionEl.querySelector('[class*="quizQuestionTextContainer" i]') ||
-                      questionEl.querySelector('.qtext') ||
                       questionEl.querySelector('.formulation .qtext') ||
                       questionEl.querySelector('.formulation') ||
                       questionEl.querySelector('.q-title, h1, h2, h3, h4, h5, h6, legend, [class*="question-text" i], [class*="prompt" i], p');
 
     if (qtextElem) {
       const clone = qtextElem.cloneNode(true);
-      clone.querySelectorAll('.answer, input, .prompt, .options-group, .info, .state, .grade').forEach(el => el.remove());
+      clone.querySelectorAll('.answer, input, .prompt, .options-group, .info, .state, .grade, .im-controls, .comment').forEach(el => el.remove());
       questionText = extractFormattedText(clone);
     }
 
-    // Strip Moodle status / grade / flag headers from the prompt
-    questionText = questionText
-      .replace(/^Not yet answered\s*/i, '')
-      .replace(/^Marked out of \d+(?:\.\d+)?\s*/i, '')
-      .replace(/^Flag question\s*/i, '')
-      .replace(/^Question\s*\d+[\.\:\s\-]*/i, '')
-      .trim();
-
-    if (/^(?:Question\s*\d*[\.\:]?|Not yet answered|Marked out of.*|Flag question)$/i.test(questionText.trim())) {
-      questionText = '';
-    }
+    // Strip Moodle metadata lines & status headers
+    questionText = cleanMoodleJunk(questionText);
 
     if (!questionText || questionText.length < 3) {
       const cloneQ = questionEl.cloneNode(true);
-      cloneQ.querySelectorAll('.answer, input, .prompt, .options-group, .info, .state, .grade, .outcome, .feedback').forEach(el => el.remove());
+      cloneQ.querySelectorAll('.answer, input, .prompt, .options-group, .info, .state, .grade, .outcome, .feedback, .im-controls, .comment').forEach(el => el.remove());
       const allText = extractFormattedText(cloneQ);
-      const lines = allText.split('\n')
-        .map(l => l.replace(/^Not yet answered\s*/i, '').replace(/^Marked out of \d+(?:\.\d+)?\s*/i, '').replace(/^Flag question\s*/i, '').replace(/^Question\s*\d+[\.\:\s\-]*/i, '').trim())
-        .filter(l => Boolean(l) && !/^(?:Question\s*\d*[\.\:]?|Not yet answered|Flag question)$/i.test(l));
+      const cleanedAll = cleanMoodleJunk(allText);
+      const lines = cleanedAll.split('\n').filter(Boolean);
       const firstOptIdx = lines.findIndex(l => /^(?:[A-Za-z][\.\:\)\-]|(?:\([A-Za-z0-9]\))|\d+[\.\:\)\-])\s+/i.test(l));
       if (firstOptIdx > 0) {
         questionText = lines.slice(0, firstOptIdx).join(' ');
@@ -809,16 +974,7 @@
       }
     }
 
-    questionText = questionText
-      .replace(/^Not yet answered\s*/i, '')
-      .replace(/^Marked out of \d+(?:\.\d+)?\s*/i, '')
-      .replace(/^Flag question\s*/i, '')
-      .replace(/^Question\s*\d+[\.\:\s\-]*/i, '')
-      .trim();
-
-    if (/^(?:Question\s*\d*[\.\:]?|Not yet answered|Marked out of.*|Flag question)$/i.test(questionText.trim())) {
-      questionText = '';
-    }
+    questionText = cleanMoodleJunk(questionText);
 
     // 1b. Detect images strictly within this question container in DOM order
     const relevantImages = extractQuestionImageElements(questionEl);
@@ -851,9 +1007,9 @@
     // If no standard inputs found, detect custom option items / labels / list items
     if (inputs.length === 0) {
       const candidates = Array.from(questionEl.querySelectorAll(
-        'label, [class*="optionItem" i], [class*="option-item" i], [class*="optionContainer" i], ' +
+        'button, [role="button"], [role="radio"], label, [class*="optionItem" i], [class*="option-item" i], [class*="optionContainer" i], ' +
         '[class*="optionCard" i], [class*="option-card" i], [class*="choiceCard" i], [class*="answerCard" i], ' +
-        '[class*="option" i], [class*="choice" i], [class*="answer" i], [class*="item" i], li, [role="button"], [role="radio"]'
+        '[class*="option" i], [class*="choice" i], [class*="answer" i], [class*="item" i], li'
       )).filter(el => {
         if (el.matches('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i], [class*="header" i]')) return false;
         if (el.closest('h1, h2, h3, h4, h5, h6, legend, [class*="title" i], [class*="prompt" i], [class*="header" i]')) return false;
@@ -869,7 +1025,7 @@
 
     // 2b. If still no inputs found, detect elements with option prefixes (A., B., C., D. or (A), (B), etc.)
     if (inputs.length === 0) {
-      const textEls = Array.from(questionEl.querySelectorAll('p, div, span, li')).filter(el => {
+      const textEls = Array.from(questionEl.querySelectorAll('button, [role="button"], p, div, span, li, a')).filter(el => {
         if (el.children.length > 3) return false;
         const t = el.textContent.trim();
         return /^(?:(?:\([A-Da-d0-9]\))|(?:\[[A-Da-d0-9]\])|[A-Da-d0-9][\.\:\)\-])\s+\S+/.test(t) && t.length < 300;
@@ -894,9 +1050,14 @@
           text = extractFormattedText(input);
         }
       } else {
-        if (input.id) {
+        if (input.labels && input.labels.length > 0) {
+          text = extractFormattedText(input.labels[0]);
+        }
+
+        if (!text && input.id) {
+          const doc = questionEl.ownerDocument || document;
           const label = questionEl.querySelector(`label[for="${CSS.escape(input.id)}"]`) ||
-                        document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+                        doc.querySelector(`label[for="${CSS.escape(input.id)}"]`);
           if (label) text = extractFormattedText(label);
         }
 
@@ -922,14 +1083,17 @@
         text = `Option ${idx + 1}`;
       }
 
+      const letterIndex = String.fromCharCode(65 + idx);
+      let letter = letterIndex;
       let formattedText = text;
+
       if (/^(true|false)$/i.test(text)) {
         formattedText = text[0].toUpperCase() + text.slice(1).toLowerCase();
+        letter = formattedText === 'True' ? 'A' : 'B';
       } else {
-        const letterIndex = String.fromCharCode(65 + idx);
-        const letterMatch = text.match(/^(?:(?:\(([A-Za-z])\))|(?:\[([A-Za-z])\])|([A-Za-z])[\.\:\)\-])\s*(.*)$/);
+        const letterMatch = text.match(/^(?:(?:\(([A-Za-z0-9])\))|(?:\[([A-Za-z0-9])\])|([A-Za-z0-9])[\.\:\)\-])\s*(.*)$/);
         if (letterMatch) {
-          const letter = (letterMatch[1] || letterMatch[2] || letterMatch[3]).toUpperCase();
+          letter = (letterMatch[1] || letterMatch[2] || letterMatch[3]).toUpperCase();
           const content = letterMatch[4] ? letterMatch[4].trim() : text;
           formattedText = `${letter}. ${content}`;
         } else {
@@ -938,8 +1102,10 @@
       }
 
       options.push({
-        id: input.id || input.value || `opt_${idx}`,
-        text: formattedText
+        id: letter,
+        text: formattedText,
+        inputVal: input.value || '',
+        elementId: input.id || ''
       });
     });
 
@@ -1030,6 +1196,15 @@
       }
     }
 
+    console.log('[Moodle AI Diagnostic 5/14] Question extracted via Mode A:', {
+      preview: (questionText || '').slice(0, 60),
+      questionNumber
+    });
+    console.log('[Moodle AI Diagnostic 6/14] Options extracted via Mode A:', {
+      count: options.length,
+      optionIds: options.map(o => o.id)
+    });
+
     return {
       platform: 'moodle',
       questionNumber,
@@ -1057,53 +1232,82 @@
     }
     lastSolveRequestTime = now;
 
+    const notif = getNotification();
+    if (notif) notif.showStatus('Quick AI — Solving question...');
+
     const extractStartTime = performance.now();
 
-    // 2. Extract question text and options
-    let data = extractFromSelection();
-    if (!data) {
+    // 2. Extract question text and options (Mode B selection or Mode A automatic)
+    const selection = window.getSelection();
+    const hasUserSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim().length > 1);
+
+    let data = null;
+    let detectionMode = hasUserSelection ? 'Mode B (Selection)' : 'Mode A (Automatic DOM)';
+
+    if (hasUserSelection) {
+      console.log('[Moodle AI Diagnostic 3/14] Selection detected by user on page');
+      data = extractFromSelection();
+      if (!data) {
+        console.warn('[Moodle AI Diagnostic 7/14] Extraction validation: FAILED (Selection is unrelated or missing context)');
+        if (notif) {
+          notif.showError('Question not detected. Select the question or use Shift + X.');
+        }
+        return;
+      }
+    } else {
+      // Mode A: Automatic DOM Detection
       const questionEl = getTargetQuestionElement();
       if (questionEl) {
+        console.log('[Moodle AI Diagnostic 4/14] Question container identified:', questionEl.className || questionEl.tagName);
         data = extractQuestionData(questionEl);
       }
-    }
 
-    // 2b. Full-Page Fallback Scan for single-question pages (GeeksforGeeks, IndiaBIX, Sanfoundry, etc.)
-    if (!data || (!data.question && (!data.options || data.options.length === 0) && (!data.images || data.images.length === 0))) {
-      const candidateRoots = [
-        document.querySelector('main, article, [role="main"], [class*="mainContent" i], #content, .content, .container'),
-        document.body
-      ].filter(Boolean);
-      for (const root of candidateRoots) {
-        const fallbackData = extractQuestionData(root);
-        if (fallbackData && (fallbackData.question || fallbackData.hasImage) && ((fallbackData.options && fallbackData.options.length >= 2) || fallbackData.hasImage || fallbackData.question.length > 20)) {
-          data = fallbackData;
-          break;
+      // 2b. Full-Page Fallback Scan for single-question pages (GeeksforGeeks, IndiaBIX, Sanfoundry, etc.)
+      if (!data || (!data.question && (!data.options || data.options.length === 0) && (!data.images || data.images.length === 0))) {
+        const candidateRoots = [
+          document.querySelector('main, article, [role="main"], [class*="mainContent" i], #content, .content, .container, [class*="quiz" i]'),
+          document.body
+        ].filter(Boolean);
+        for (const root of candidateRoots) {
+          const fallbackData = extractQuestionData(root);
+          if (fallbackData && (fallbackData.question || fallbackData.hasImage) && ((fallbackData.options && fallbackData.options.length >= 2) || fallbackData.hasImage || fallbackData.question.length > 20)) {
+            data = fallbackData;
+            break;
+          }
         }
       }
     }
 
     const extractionDurationMs = Math.round(performance.now() - extractStartTime);
 
-    // 3. AUTOMATIC FALLBACK TO VISION SCREENSHOT
-    // If no text question could be extracted from DOM (e.g. image-based question, canvas, protected iframe, or custom web app),
-    // automatically fall back to Vision Screenshot so the user never has to copy, highlight, or manually press Shift+X!
+    // If no question text or options detected in DOM, show immediate user-facing error
     if (!data || (!data.question && (!data.options || data.options.length === 0) && (!data.images || data.images.length === 0))) {
-      console.log('[Moodle AI] Text question not detected in DOM, automatically falling back to Vision Screenshot...');
-      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
-        return solveQuestionScreenshot('', false);
-      }
-      if (notification) {
-        notification.showStatus('No question detected. Highlight text or press Shift+X to snip.');
+      console.warn('[Moodle AI Diagnostic 7/14] Extraction validation: FAILED (No question text or options detected in DOM)');
+      if (notif) {
+        notif.showError('Question not detected. Select the question or use Shift + X.');
       }
       return;
     }
 
+    console.log('[Moodle AI] QUESTION_EXTRACTED:', {
+      mode: detectionMode,
+      question: (data.question || '').slice(0, 70),
+      optionsCount: data.options?.length,
+      hasImages: Boolean(data.hasImage || (data.imageElements && data.imageElements.length > 0))
+    });
+
+    console.log('[Moodle AI Diagnostic 7/14] Extraction validation: PASSED', {
+      mode: detectionMode,
+      questionPreview: data.question?.slice(0, 70),
+      optionsCount: data.options?.length,
+      hasImages: Boolean(data.hasImage || (data.imageElements && data.imageElements.length > 0))
+    });
+
     // 4. Resolve all images if question is image-based or contains images
     let resolvedImages = [];
     if (data.imageElements && data.imageElements.length > 0) {
-      if (notification && data.isImageBased) {
-        notification.showStatus('Decoding question image...');
+      if (notif && data.isImageBased) {
+        notif.showStatus('Quick AI — Solving question...');
       }
       for (const el of data.imageElements) {
         try {
@@ -1117,8 +1321,8 @@
 
     // If marked as image-based question (no question text in DOM), verify at least one image decoded
     if (data.isImageBased && resolvedImages.length === 0) {
-      if (notification) {
-        notification.showError('Could not decode question image. Press Shift+X to snip manually.');
+      if (notif) {
+        notif.showError('Could not decode question image. Press Shift+X to snip manually.');
       }
       return;
     }
@@ -1126,14 +1330,14 @@
     // 5. Duplicate request check (same question just solved)
     const currentQuestionHash = hashString((data.question || '') + (data.options || []).map(o => o.text).join('') + resolvedImages.join(''));
     if (lastAnswer && lastProcessedQuestionHash === currentQuestionHash && (now - lastSolveRequestTime < 2000)) {
-      if (notification) notification.showAnswer(lastAnswer);
+      if (notif) notif.showAnswer(lastAnswer);
       return;
     }
 
     // Cancel / invalidate obsolete in-flight requests
     const thisRequestId = ++currentRequestId;
 
-    if (notification) notification.showStatus(resolvedImages.length > 0 ? 'Analyzing with Vision AI...' : 'Analyzing question...');
+    if (notif) notif.showStatus('Quick AI — Solving question...');
 
     try {
       const startTime = performance.now();
@@ -1148,6 +1352,24 @@
       if (resolvedImages.length > 0) {
         payload.image = resolvedImages[0];
         payload.images = resolvedImages;
+      }
+
+      console.log('[Moodle AI] BACKGROUND_MESSAGE_SENT:', {
+        action: 'ANALYZE_QUESTION',
+        questionType: payload.questionType,
+        optionsCount: payload.options?.length
+      });
+
+      console.log('[Moodle AI Diagnostic 8/14] Background message sent:', {
+        action: 'ANALYZE_QUESTION',
+        questionType: payload.questionType,
+        optionsCount: payload.options?.length
+      });
+
+      if (!isExtensionContextValid()) {
+        console.warn('[Moodle AI] Extension context invalidated. Refresh required.');
+        if (notif) notif.showError('Please refresh this page (Cmd+R or F5)');
+        return;
       }
 
       const response = await chrome.runtime.sendMessage({
@@ -1167,13 +1389,40 @@
       const res = response.data;
       const totalClientDurationMs = Math.round(performance.now() - startTime);
 
+      const isOllama = Boolean(
+        res.isOllama ||
+        res.provider === 'ollama' ||
+        res.source === 'ollama_fallback' ||
+        res.engine === 'direct_ollama' ||
+        (res.model && (String(res.model).includes('gemma') || String(res.model).includes('llama') || String(res.model).includes('mistral') || String(res.model).includes('qwen')))
+      );
+
+      console.log('[Moodle AI] AI_RESPONSE_RECEIVED:', {
+        option: res.option,
+        answer: (res.answer || res.answerText || '').slice(0, 40),
+        isOllama,
+        provider: res.provider || (isOllama ? 'ollama' : 'gemini')
+      });
+
+      console.log('[Moodle AI Diagnostic 12/14] Response processed:', {
+        option: res.option,
+        answerPreview: (res.answer || res.answerText || '').slice(0, 40),
+        isOllama,
+        provider: res.provider || (isOllama ? 'ollama' : 'gemini')
+      });
+
       lastAnswer = {
         question: payload.question || '',
         option: res.option || '',
         answer: res.answer || res.answerText || '',
+        reason: res.reason || res.explanation || '',
+        explanation: res.explanation || res.reason || '',
         confidence: res.confidence,
         status: res.status || 'ok',
         model: res.realUsage?.modelUsed || res.model || '',
+        provider: res.provider || (isOllama ? 'ollama' : 'gemini'),
+        source: res.source || (isOllama ? 'ollama_fallback' : 'cloud'),
+        isOllama: isOllama,
         timestamp: Date.now(),
         latencyMs: res.latencyMs || totalClientDurationMs
       };
@@ -1186,18 +1435,23 @@
         }
       } catch (_) {}
 
-      if (notification) {
-        notification.showAnswer(lastAnswer);
+      if (notif) {
+        notif.showAnswer(lastAnswer);
       }
     } catch (err) {
       if (thisRequestId !== currentRequestId) return;
-      console.error('[Moodle AI] Solve error:', err.message);
+      const isContextInv = err.message && (err.message.includes('context invalidated') || err.message.includes('Extension context'));
+      if (isContextInv) {
+        console.warn('[Moodle AI] Solve error: Extension context invalidated. Tab reload required.');
+      } else {
+        console.error('[Moodle AI] Solve error:', err.message);
+      }
       let errMsg = err.message || 'Failed to solve question';
-      if (errMsg.includes('context invalidated')) {
+      if (isContextInv) {
         errMsg = 'Please refresh this page (Cmd+R or F5)';
       }
-      if (notification) {
-        notification.showError(errMsg);
+      if (notif) {
+        notif.showError(errMsg);
       }
     }
   }
@@ -1253,7 +1507,14 @@
       }
     }
 
-    if (notification) notification.showStatus('Evaluating...');
+    const notif = getNotification();
+    if (notif) notif.showStatus(isInteractive ? 'Quick AI — Select question region...' : 'Quick AI — Solving screenshot...');
+
+    if (!isExtensionContextValid()) {
+      console.warn('[Moodle AI] Extension context invalidated. Refresh required.');
+      if (notif) notif.showError('Please refresh this page (Cmd+R or F5)');
+      return;
+    }
 
     try {
       const captureRes = await chrome.runtime.sendMessage({ action: 'CAPTURE_VISIBLE_TAB' });
@@ -1266,33 +1527,63 @@
         finalImageUrl = await window.MoodleScreenshotHandler.cropImage(captureRes.dataUrl, cropRect);
       }
 
-      if (notification) {
-        notification.showStatus('Evaluating...');
+      if (notif) {
+        notif.showStatus('Quick AI — Solving screenshot...');
       }
 
-      const response = await chrome.runtime.sendMessage({
+      console.log('[Moodle AI] BACKGROUND_MESSAGE_SENT:', {
         action: 'ANALYZE_QUESTION',
-        payload: {
-          platform: 'moodle',
-          questionType: 'vision',
-          question: partialText || 'Identify the question shown in the selected area and determine the best answer.',
-          options: extractedOptions || [],
-          image: finalImageUrl
-        }
+        questionType: 'vision'
       });
+
+      let response = null;
+      try {
+        response = await chrome.runtime.sendMessage({
+          action: 'ANALYZE_QUESTION',
+          payload: {
+            platform: 'moodle',
+            questionType: 'vision',
+            question: partialText || 'Identify the question shown in the selected area and determine the best answer.',
+            options: extractedOptions || [],
+            image: finalImageUrl
+          }
+        });
+      } catch (sendErr) {
+        throw new Error(sendErr.message || 'Could not communicate with background service');
+      }
 
       if (!response || !response.success || !response.data) {
         throw new Error(response ? response.error : 'No vision response from backend');
       }
 
       const res = response.data;
+      const isOllama = Boolean(
+        res.isOllama ||
+        res.provider === 'ollama' ||
+        res.source === 'ollama_fallback' ||
+        res.engine === 'direct_ollama' ||
+        (res.model && (String(res.model).includes('gemma') || String(res.model).includes('llama') || String(res.model).includes('mistral') || String(res.model).includes('qwen')))
+      );
+
+      console.log('[Moodle AI] AI_RESPONSE_RECEIVED:', {
+        option: res.option,
+        answer: (res.answer || res.answerText || '').slice(0, 40),
+        isOllama,
+        provider: res.provider || (isOllama ? 'ollama' : 'gemini')
+      });
+
       lastAnswer = {
         question: partialText || 'Screen Snippet',
         option: res.option || '',
-        answer: res.answer || '',
+        answer: res.answer || res.answerText || '',
+        reason: res.reason || res.explanation || '',
+        explanation: res.explanation || res.reason || '',
         confidence: res.confidence || 0.95,
         status: res.status || 'ok',
         model: res.realUsage?.modelUsed || res.model || '',
+        provider: res.provider || (isOllama ? 'ollama' : 'gemini'),
+        source: res.source || (isOllama ? 'ollama_fallback' : 'cloud'),
+        isOllama: isOllama,
         timestamp: Date.now()
       };
 
@@ -1302,12 +1593,17 @@
         }
       } catch (_) {}
 
-      if (notification) {
-        notification.showAnswer(lastAnswer);
+      if (notif) {
+        notif.showAnswer(lastAnswer);
       }
     } catch (err) {
-      console.error('[Moodle AI] Screenshot solve error:', err.message);
-      if (notification) notification.showError(err.message || 'Vision solve failed');
+      const isContextInv = err.message && (err.message.includes('context invalidated') || err.message.includes('Extension context'));
+      if (isContextInv) {
+        console.warn('[Moodle AI] Screenshot solve error: Extension context invalidated. Tab reload required.');
+      } else {
+        console.error('[Moodle AI] Screenshot solve error:', err.message);
+      }
+      if (notif) notif.showError(isContextInv ? 'Please refresh this page (Cmd+R or F5)' : (err.message || 'Vision solve failed'));
     }
   }
 
@@ -1315,7 +1611,13 @@
    * Execute Shortcut 3: Shift + A — Show the Last Answer Again
    */
   async function showLastAnswerAgain() {
-    if (!notification) return;
+    const notif = getNotification();
+    if (!notif) return;
+
+    if (!isExtensionContextValid()) {
+      notif.showError('Please refresh this page (Cmd+R or F5)');
+      return;
+    }
 
     let answerObj = lastAnswer;
     if (!answerObj || (!answerObj.answer && !answerObj.option)) {
@@ -1331,9 +1633,9 @@
     }
 
     if (answerObj && (answerObj.answer || answerObj.option)) {
-      notification.showAnswer(answerObj);
+      notif.showAnswer(answerObj);
     } else {
-      notification.showStatus('No previous answer recorded yet');
+      notif.showStatus('Quick AI — No previous answer recorded yet');
     }
   }
 
@@ -1357,9 +1659,18 @@
    * Attach keyboard shortcuts on window (Shift+Z, Shift+X, Shift+A)
    */
   function attachKeyboardShortcuts() {
-    window.addEventListener('keydown', (e) => {
+    if (activeKeydownListener) {
+      window.removeEventListener('keydown', activeKeydownListener, true);
+    }
+
+    activeKeydownListener = (e) => {
       if (!e.shiftKey) return;
-      if (isTypingInField(e.target)) return;
+      if (isTypingInField(e.target)) {
+        const sel = window.getSelection();
+        const hasSelection = sel && !sel.isCollapsed && sel.toString().trim().length > 0;
+        const inQuiz = Boolean(e.target.closest && e.target.closest('.que, .question, [data-question-id], [class*="quiz" i]'));
+        if (!hasSelection && !inQuiz) return;
+      }
 
       const key = (e.key || '').toUpperCase();
       const code = (e.code || '');
@@ -1370,22 +1681,41 @@
 
       if (!isZ && !isX && !isA) return;
 
+      console.log('[Moodle AI] SHORTCUT_RECEIVED:', {
+        key,
+        code,
+        isZ,
+        isX,
+        isA,
+        isTopFrame: window === window.top
+      });
+
+      console.log('[Moodle AI Diagnostic 1/14] Shortcut event received:', { key, code, isZ, isX, isA });
+      console.log('[Moodle AI Diagnostic 2/14] Active frame identified:', {
+        isTopFrame: window === window.top,
+        hasFocus: typeof document.hasFocus === 'function' ? document.hasFocus() : true
+      });
+
       // Global debounce to prevent duplicate events between frame DOM listeners and background commands
       const now = Date.now();
-      if (now - lastShortcutEventTime < 450) {
+      if (now - lastShortcutEventTime < 350) {
         e.preventDefault();
         e.stopPropagation();
         return;
       }
       lastShortcutEventTime = now;
 
-      // In child frames: if focus is NOT inside this frame, do not trigger
-      if (window !== window.top && typeof document.hasFocus === 'function' && !document.hasFocus()) {
-        return;
-      }
-
       e.preventDefault();
       e.stopPropagation();
+
+      // Proactively verify extension context before calling background
+      if (!isExtensionContextValid()) {
+        const notif = getNotification();
+        if (notif) {
+          notif.showError('Please refresh this page (Cmd+R or F5)');
+        }
+        return;
+      }
 
       if (isZ) {
         solveCurrentQuestion();
@@ -1394,7 +1724,9 @@
       } else if (isA) {
         showLastAnswerAgain();
       }
-    }, true);
+    };
+
+    window.addEventListener('keydown', activeKeydownListener, true);
   }
 
   /**
@@ -1411,6 +1743,7 @@
       const now = Date.now();
 
       if (message.action === 'TRIGGER_SOLVE_QUESTION') {
+        console.log('[Moodle AI] SHORTCUT_RECEIVED:', { action: message.action, isTopFrame: window === window.top });
         if (now - lastShortcutEventTime < 450) {
           sendResponse({ success: true, debounced: true });
           return true;
@@ -1422,6 +1755,7 @@
       }
 
       if (message.action === 'TRIGGER_SOLVE_SCREENSHOT') {
+        console.log('[Moodle AI] SHORTCUT_RECEIVED:', { action: message.action, isTopFrame: window === window.top });
         if (now - lastShortcutEventTime < 450) {
           sendResponse({ success: true, debounced: true });
           return true;
@@ -1433,11 +1767,7 @@
       }
 
       if (message.action === 'TRIGGER_SHOW_LAST_ANSWER') {
-        // Enforce that only ONE frame ever displays the previous answer
-        if (window !== window.top) {
-          sendResponse({ success: true, skippedChildFrame: true });
-          return true;
-        }
+        console.log('[Moodle AI] SHORTCUT_RECEIVED:', { action: message.action, isTopFrame: window === window.top });
         if (now - lastShortcutEventTime < 450) {
           sendResponse({ success: true, debounced: true });
           return true;
@@ -1464,6 +1794,7 @@
 
   // Expose adapter methods for testing and extension consumption
   window.MoodleAdapter = {
+    cleanMoodleJunk,
     extractFormattedText,
     extractQuestionData,
     extractFromSelection,

@@ -137,7 +137,7 @@
         };
 
         const onKeyDown = (e) => {
-          if (e.key === 'Escape') {
+          if (e.key === 'Escape' || e.key === 'Enter') {
             e.preventDefault();
             e.stopPropagation();
             cleanup();
@@ -145,6 +145,7 @@
           }
         };
 
+        window.addEventListener('blur', cleanup, { once: true });
         overlay.addEventListener('mousedown', onMouseDown, true);
         window.addEventListener('mousemove', onMouseMove, true);
         window.addEventListener('mouseup', onMouseUp, true);

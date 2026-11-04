@@ -6,11 +6,6 @@
 (function () {
   'use strict';
 
-  if (window.MoodleQuickNotificationManager) {
-    window.MoodleQuickNotification = window.MoodleQuickNotificationManager;
-    return;
-  }
-
   const isTopFrame = (window === window.top);
 
   class QuickNotification {
@@ -25,10 +20,13 @@
       this.chunks = [];
       this.currentChunkIndex = 0;
       this.fullText = '';
+      this.explanationText = '';
+      this.isExpanded = false;
+      this.isOllama = false;
 
       this.init();
 
-      // In top frame: listen for cross-frame notification requests
+      // Listen for cross-frame notification requests if applicable
       if (isTopFrame) {
         window.addEventListener('message', (e) => {
           if (e.data && e.data.type === 'MOODLE_SHOW_NOTIFICATION') {
@@ -55,14 +53,69 @@
       } catch (_) {}
 
       if (isTopFrame) {
-        this.createDOM();
+        this.ensureDOM();
       }
+
+      console.log('[Moodle AI] NOTIFICATION_INITIALIZED:', {
+        position: this.currentPosition,
+        durationMs: this.currentDurationMs,
+        isTopFrame
+      });
+    }
+
+    ensureDOM() {
+      if (!isTopFrame) {
+        try {
+          if (window.top && window.top !== window) {
+            return;
+          }
+        } catch (_) {}
+      }
+
+      const targetParent = document.fullscreenElement || document.documentElement || document.body;
+      if (!targetParent) return;
+
+      // If host is already attached and has box, ensure positioned and return
+      if (this.host && this.box) {
+        if (this.host.parentNode !== targetParent) {
+          targetParent.appendChild(this.host);
+        }
+        this.applyPositionStyles(this.host, this.currentPosition);
+        return;
+      }
+
+      // Check for existing host in DOM
+      const existingHost = document.getElementById('moodle-quick-notify-host');
+      if (existingHost && existingHost.shadowRoot && existingHost.shadowRoot.getElementById('notify-box')) {
+        this.host = existingHost;
+        this.container = existingHost;
+        this.shadow = existingHost.shadowRoot;
+        this.box = this.shadow.getElementById('notify-box');
+        if (this.host.parentNode !== targetParent) {
+          targetParent.appendChild(this.host);
+        }
+        this.applyPositionStyles(this.host, this.currentPosition);
+        return;
+      }
+
+      if (existingHost) {
+        existingHost.remove();
+      }
+
+      this.createDOM();
     }
 
     createDOM() {
-      // In child frames, we do NOT inject DOM into the child frame body.
-      // We delegate to window.top so that only ONE notification element exists on the page.
-      if (!isTopFrame) return;
+      if (!isTopFrame) {
+        try {
+          if (window.top && window.top !== window) {
+            return;
+          }
+        } catch (_) {}
+      }
+
+      const targetParent = document.fullscreenElement || document.documentElement || document.body;
+      if (!targetParent) return;
 
       // Purge any stale or duplicate host elements
       const existingHosts = document.querySelectorAll('#moodle-quick-notify-host');
@@ -74,7 +127,13 @@
         this.container = this.host;
         this.shadow = this.host.shadowRoot;
         this.box = this.shadow ? this.shadow.getElementById('notify-box') : null;
-        if (this.box) return;
+        if (this.box) {
+          if (this.host.parentNode !== targetParent) {
+            targetParent.appendChild(this.host);
+          }
+          this.applyPositionStyles(this.host, this.currentPosition);
+          return;
+        }
         this.host.remove();
       }
 
@@ -91,10 +150,10 @@
         box-shadow: none !important;
         margin: 0 !important;
         padding: 0 !important;
-        line-height: 0 !important;
-        font-size: 0 !important;
+        line-height: normal !important;
         width: auto !important;
         height: auto !important;
+        max-width: min(460px, 92vw) !important;
         overflow: visible !important;
       `;
       this.applyPositionStyles(host, this.currentPosition);
@@ -104,71 +163,120 @@
       const style = document.createElement('style');
       style.textContent = `
         :host {
-          all: initial !important;
           display: block !important;
+          position: fixed !important;
+          z-index: 2147483647 !important;
+          pointer-events: none !important;
           border: none !important;
           outline: none !important;
           background: transparent !important;
           box-shadow: none !important;
           margin: 0 !important;
           padding: 0 !important;
+          line-height: normal !important;
         }
         .quick-notify-box {
-          display: none;
-          background: #FFFFFF;
-          color: #000000;
-          border: 1px solid #E5E5E5;
-          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-          border-radius: 6px;
-          padding: 6px 12px;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-          font-size: 13px;
-          font-weight: 700;
-          letter-spacing: 0.2px;
-          line-height: 1.35;
-          white-space: pre-wrap;
-          max-width: min(460px, 92vw);
-          box-sizing: border-box;
-          pointer-events: auto;
-          cursor: pointer;
-          user-select: none;
-          transition: opacity 0.15s ease, transform 0.15s ease;
+          display: none !important;
+          background: #FFFFFF !important;
+          color: #000000 !important;
+          border: 1px solid #E5E5E5 !important;
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12) !important;
+          border-radius: 6px !important;
+          padding: 6px 10px !important;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+          font-size: 13px !important;
+          font-weight: 700 !important;
+          letter-spacing: 0.2px !important;
+          line-height: 1.35 !important;
+          max-width: min(440px, 92vw) !important;
+          box-sizing: border-box !important;
+          pointer-events: auto !important;
+          cursor: pointer !important;
+          user-select: none !important;
+          opacity: 1 !important;
+          visibility: visible !important;
+          transition: opacity 0.15s ease, transform 0.15s ease !important;
         }
         .quick-notify-box.visible {
-          display: inline-block;
+          display: inline-block !important;
+          opacity: 1 !important;
+          visibility: visible !important;
         }
         .quick-notify-box.status {
-          background: #FFFFFF;
-          color: #555555;
-          border: 1px solid #E5E5E5;
-          font-weight: 500;
-          font-size: 12px;
+          background: #FFFFFF !important;
+          color: #555555 !important;
+          border: 1px solid #E5E5E5 !important;
+          font-weight: 500 !important;
+          font-size: 12px !important;
         }
         .quick-notify-box.error {
-          background: #FFFFFF;
-          color: #991B1B;
-          border: 1px solid #E5E5E5;
-          font-weight: 600;
-          font-size: 12px;
+          background: #FFFFFF !important;
+          color: #991B1B !important;
+          border: 1px solid #E5E5E5 !important;
+          font-weight: 600 !important;
+          font-size: 12px !important;
+        }
+        .answer-row {
+          display: inline-flex !important;
+          align-items: center !important;
+          white-space: pre-wrap !important;
+          word-break: break-word !important;
+          line-height: 1.35 !important;
+        }
+        .answer-text {
+          display: inline !important;
+          font-weight: 700 !important;
+          color: #000000 !important;
+        }
+        .ollama-badge {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          margin-left: 6px !important;
+          font-size: 13px !important;
+          line-height: 1 !important;
+          cursor: help !important;
+          user-select: none !important;
+          vertical-align: middle !important;
         }
         .more-dots-btn {
-          display: inline-block;
-          margin-left: 6px;
-          padding: 1px 6px;
-          background: #F5F5F5;
-          color: #000000;
-          border: 1px solid #E5E5E5;
-          border-radius: 4px;
-          font-size: 12px;
-          font-weight: 800;
-          letter-spacing: 1px;
-          cursor: pointer;
-          vertical-align: baseline;
-          transition: background 0.15s, color 0.15s;
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          margin-left: 6px !important;
+          padding: 0 4px !important;
+          background: #F3F4F6 !important;
+          color: #4B5563 !important;
+          border: 1px solid #E5E5E5 !important;
+          border-radius: 4px !important;
+          font-size: 13px !important;
+          font-weight: 800 !important;
+          line-height: 18px !important;
+          height: 18px !important;
+          min-width: 14px !important;
+          cursor: pointer !important;
+          vertical-align: middle !important;
+          transition: background 0.15s, color 0.15s, border-color 0.15s !important;
+          user-select: none !important;
         }
         .more-dots-btn:hover {
-          background: #E5E5E5;
-          color: #000000;
+          background: #E5E7EB !important;
+          color: #111827 !important;
+          border-color: #D1D5DB !important;
+        }
+        .answer-explanation {
+          display: block !important;
+          margin-top: 6px !important;
+          padding-top: 5px !important;
+          border-top: 1px solid #E5E5E5 !important;
+          font-size: 11.5px !important;
+          font-weight: 500 !important;
+          color: #4B5563 !important;
+          line-height: 1.4 !important;
+          white-space: pre-wrap !important;
+          word-break: break-word !important;
+          cursor: text !important;
+          user-select: text !important;
         }
         @media (prefers-color-scheme: dark) {
           .quick-notify-box {
@@ -176,6 +284,9 @@
             color: #F9FAFB !important;
             border-color: #374151 !important;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45) !important;
+          }
+          .answer-text {
+            color: #F9FAFB !important;
           }
           .quick-notify-box.status {
             background: #1E1E1E !important;
@@ -187,10 +298,19 @@
             color: #F87171 !important;
             border-color: #7F1D1D !important;
           }
+          .answer-explanation {
+            border-top-color: #374151 !important;
+            color: #9CA3AF !important;
+          }
           .more-dots-btn {
             background: #2D3748 !important;
-            color: #F9FAFB !important;
+            color: #E2E8F0 !important;
             border-color: #4B5563 !important;
+          }
+          .more-dots-btn:hover {
+            background: #374151 !important;
+            color: #FFFFFF !important;
+            border-color: #6B7280 !important;
           }
         }
       `;
@@ -200,51 +320,69 @@
       box.className = 'quick-notify-box';
       box.id = 'notify-box';
       box.title = 'Click to dismiss';
-      box.addEventListener('click', () => {
-        if (this.chunks && this.currentChunkIndex < this.chunks.length - 1) {
-          this.advanceChunk();
-        } else {
-          this.hide();
+      box.addEventListener('click', (e) => {
+        if (e.target && e.target.closest && e.target.closest('.more-dots-btn')) {
+          return;
         }
+        if (e.target && e.target.closest && e.target.closest('.answer-explanation')) {
+          return;
+        }
+        this.hide();
       });
       shadow.appendChild(box);
 
-      if (document.body) {
-        document.body.appendChild(host);
-      } else if (document.documentElement) {
-        document.documentElement.appendChild(host);
-      }
+      targetParent.appendChild(host);
 
       this.host = host;
       this.container = host;
       this.shadow = shadow;
       this.box = box;
+      console.log('[Moodle AI] NOTIFICATION_HOST_CREATED:', {
+        hostId: host.id,
+        parentTag: targetParent.tagName,
+        isTopFrame
+      });
     }
 
     applyPositionStyles(el, pos) {
       if (!el) return;
-      el.style.top = 'auto';
-      el.style.bottom = 'auto';
-      el.style.left = 'auto';
-      el.style.right = 'auto';
+      el.style.setProperty('position', 'fixed', 'important');
+      el.style.setProperty('z-index', '2147483647', 'important');
+      el.style.setProperty('pointer-events', 'none', 'important');
+      el.style.setProperty('border', 'none', 'important');
+      el.style.setProperty('outline', 'none', 'important');
+      el.style.setProperty('background', 'transparent', 'important');
+      el.style.setProperty('box-shadow', 'none', 'important');
+      el.style.setProperty('margin', '0', 'important');
+      el.style.setProperty('padding', '0', 'important');
+      el.style.setProperty('line-height', 'normal', 'important');
+      el.style.setProperty('width', 'auto', 'important');
+      el.style.setProperty('height', 'auto', 'important');
+      el.style.setProperty('max-width', 'min(460px, 92vw)', 'important');
+      el.style.setProperty('overflow', 'visible', 'important');
+
+      el.style.setProperty('top', 'auto', 'important');
+      el.style.setProperty('bottom', 'auto', 'important');
+      el.style.setProperty('left', 'auto', 'important');
+      el.style.setProperty('right', 'auto', 'important');
 
       switch (pos) {
         case 'bottom-right':
-          el.style.bottom = '16px';
-          el.style.right = '16px';
+          el.style.setProperty('bottom', '16px', 'important');
+          el.style.setProperty('right', '16px', 'important');
           break;
         case 'top-left':
-          el.style.top = '16px';
-          el.style.left = '16px';
+          el.style.setProperty('top', '16px', 'important');
+          el.style.setProperty('left', '16px', 'important');
           break;
         case 'bottom-left':
-          el.style.bottom = '16px';
-          el.style.left = '16px';
+          el.style.setProperty('bottom', '16px', 'important');
+          el.style.setProperty('left', '16px', 'important');
           break;
         case 'top-right':
         default:
-          el.style.top = '16px';
-          el.style.right = '16px';
+          el.style.setProperty('top', '16px', 'important');
+          el.style.setProperty('right', '16px', 'important');
           break;
       }
     }
@@ -281,20 +419,24 @@
     }
 
     /**
-     * Show answer notification with progressive 3-dot chunk expansion
+     * Show compact answer notification:
+     * Collapsed: [Option — Answer Text] [🦙] [⋮]
+     * Expanded: Above line + [Explanation: ...]
      */
     showAnswer(payload) {
       if (!isTopFrame) {
         try {
-          window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showAnswer', payload }, '*');
-          return;
+          if (window.top && typeof window.top.postMessage === 'function') {
+            window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showAnswer', payload }, '*');
+            return;
+          }
         } catch (_) {}
       }
 
-      this.createDOM();
+      this.ensureDOM();
       this.clearTimer();
 
-      const { option, answer } = payload || {};
+      const { option, answer, reason, explanation, isOllama, provider, source, model } = payload || {};
       let text = '';
       const hasRealOption = option && String(option).trim() && String(option).toUpperCase() !== 'UNCERTAIN';
       const hasRealAnswer = answer && String(answer).trim() && !String(answer).toUpperCase().startsWith('UNCERTAIN');
@@ -316,88 +458,149 @@
       }
 
       this.fullText = text;
+      this.explanationText = (reason || explanation || '').trim();
+      this.isOllama = Boolean(
+        isOllama ||
+        provider === 'ollama' ||
+        source === 'ollama_fallback' ||
+        (model && (String(model).includes('gemma') || String(model).includes('llama') || String(model).includes('mistral') || String(model).includes('qwen')))
+      );
+      this.isExpanded = false;
       this.chunks = this.splitIntoChunks(text, 42);
       this.currentChunkIndex = 0;
-      this.renderCurrentChunk();
+      this.render();
     }
 
     showImagePreview(dataUrl, statusText = 'Evaluating...') {
       this.showStatus(statusText || 'Evaluating...');
     }
 
+    toggleExpanded() {
+      this.isExpanded = !this.isExpanded;
+      this.render();
+    }
+
+    advanceChunk() {
+      this.toggleExpanded();
+    }
+
     renderCurrentChunk() {
+      this.render();
+    }
+
+    render() {
       this.clearTimer();
+      this.ensureDOM();
       if (!this.box) return;
-      if (this.host) this.host.style.setProperty('display', 'block', 'important');
+      if (this.host) {
+        this.host.style.setProperty('display', 'block', 'important');
+        this.applyPositionStyles(this.host, this.currentPosition);
+      }
+
+      console.log('[Moodle AI] NOTIFICATION_RENDER_CALLED:', {
+        type: 'answer',
+        isExpanded: this.isExpanded,
+        isOllama: this.isOllama,
+        textPreview: this.fullText?.slice(0, 35)
+      });
 
       this.box.className = 'quick-notify-box visible';
       this.box.innerHTML = '';
 
-      if (!this.chunks || this.chunks.length <= 1) {
-        this.box.textContent = this.fullText;
-        this.box.title = 'Click to dismiss';
-        this.timerId = setTimeout(() => {
-          this.hide();
-        }, this.currentDurationMs);
-        return;
+      // 1. Answer row: compact line [Option — Answer Text] [🦙] [⋮]
+      const row = document.createElement('div');
+      row.className = 'answer-row';
+
+      const answerSpan = document.createElement('span');
+      answerSpan.className = 'answer-text';
+      answerSpan.textContent = this.fullText;
+      row.appendChild(answerSpan);
+
+      // 2. Ollama 🦙 badge: rendered only when local Ollama provided the answer
+      if (this.isOllama) {
+        const badge = document.createElement('span');
+        badge.className = 'ollama-badge';
+        badge.textContent = '🦙';
+        badge.title = 'Answered by local Ollama';
+        badge.setAttribute('aria-label', 'Answered by local Ollama');
+        row.appendChild(badge);
       }
 
-      const displayed = this.chunks.slice(0, this.currentChunkIndex + 1).join(' ');
-      const textSpan = document.createElement('span');
-      textSpan.textContent = displayed;
-      this.box.appendChild(textSpan);
+      // 3. Three-dot (⋮) menu button
+      const dotsBtn = document.createElement('button');
+      dotsBtn.className = 'more-dots-btn menu-toggle-btn';
+      dotsBtn.type = 'button';
+      dotsBtn.tabIndex = -1; // Never steal keyboard navigation or Enter key from quiz form
+      dotsBtn.textContent = '⋮';
+      dotsBtn.title = this.isExpanded ? 'Click to collapse explanation' : 'Click to view explanation';
+      dotsBtn.setAttribute('aria-label', dotsBtn.title);
+      dotsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleExpanded();
+      });
+      row.appendChild(dotsBtn);
 
-      const hasMore = this.currentChunkIndex < this.chunks.length - 1;
-      if (hasMore) {
-        const dots = document.createElement('span');
-        dots.className = 'more-dots-btn';
-        dots.textContent = '···';
-        dots.title = `Click to show more (${this.currentChunkIndex + 1}/${this.chunks.length})`;
-        dots.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.advanceChunk();
-        });
-        this.box.appendChild(dots);
-        this.box.title = 'Click to show more';
+      this.box.appendChild(row);
 
+      // 4. Expanded explanation block
+      if (this.isExpanded) {
+        const explDiv = document.createElement('div');
+        explDiv.className = 'answer-explanation';
+        let rawExpl = this.explanationText || 'Verified solution determined.';
+        if (!/^explanation\s*:/i.test(rawExpl)) {
+          rawExpl = `Explanation: ${rawExpl}`;
+        }
+        explDiv.textContent = rawExpl;
+        this.box.appendChild(explDiv);
+
+        this.box.title = 'Click outside to dismiss';
         this.timerId = setTimeout(() => {
           this.hide();
-        }, 4500);
+        }, Math.max(25000, this.currentDurationMs));
       } else {
         this.box.title = 'Click to dismiss';
         this.timerId = setTimeout(() => {
           this.hide();
-        }, this.currentDurationMs + 1000);
+        }, Math.max(4000, this.currentDurationMs));
       }
-    }
 
-    advanceChunk() {
-      if (this.chunks && this.currentChunkIndex < this.chunks.length - 1) {
-        this.currentChunkIndex++;
-        this.renderCurrentChunk();
-      } else {
-        this.hide();
-      }
+      console.log('[Moodle AI] NOTIFICATION_VISIBLE:', {
+        hostDisplay: this.host?.style?.display,
+        boxClass: this.box?.className,
+        text: this.box?.textContent?.slice(0, 40)
+      });
     }
 
     showStatus(msg) {
       if (!isTopFrame) {
         try {
-          window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showStatus', payload: msg }, '*');
-          return;
+          if (window.top && typeof window.top.postMessage === 'function') {
+            window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showStatus', payload: msg }, '*');
+            return;
+          }
         } catch (_) {}
       }
 
-      this.createDOM();
+      this.ensureDOM();
       this.clearTimer();
 
-      if (this.host) this.host.style.setProperty('display', 'block', 'important');
+      if (this.host) {
+        this.host.style.setProperty('display', 'block', 'important');
+        this.applyPositionStyles(this.host, this.currentPosition);
+      }
       if (this.box) {
         this.box.className = 'quick-notify-box visible status';
-        this.box.textContent = msg || 'Analyzing...';
+        this.box.textContent = msg || 'Quick AI — Solving question...';
         this.box.title = 'Processing question';
-        this.timerId = setTimeout(() => this.hide(), 3500);
+        this.timerId = setTimeout(() => this.hide(), 45000);
       }
+
+      console.log('[Moodle AI] NOTIFICATION_RENDER_CALLED:', { type: 'status', msg });
+      console.log('[Moodle AI] NOTIFICATION_VISIBLE:', {
+        hostDisplay: this.host?.style?.display,
+        boxClass: this.box?.className,
+        text: this.box?.textContent
+      });
     }
 
     formatErrorMessage(raw) {
@@ -410,7 +613,7 @@
         return 'Ollama 403: Click Reload in chrome://extensions';
       }
       if (text.includes('Failed to fetch') || text.includes('ECONNREFUSED')) {
-        return 'Ollama is offline. Please launch the Ollama app.';
+        return 'Local backend or Ollama is offline. Launch Ollama app.';
       }
       if (text.includes('No local Ollama model') || text.includes('not installed in Ollama')) {
         return 'No Ollama model chosen. Select a model in Settings.';
@@ -435,15 +638,20 @@
     showError(msg) {
       if (!isTopFrame) {
         try {
-          window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showError', payload: msg }, '*');
-          return;
+          if (window.top && typeof window.top.postMessage === 'function') {
+            window.top.postMessage({ type: 'MOODLE_SHOW_NOTIFICATION', action: 'showError', payload: msg }, '*');
+            return;
+          }
         } catch (_) {}
       }
 
-      this.createDOM();
+      this.ensureDOM();
       this.clearTimer();
 
-      if (this.host) this.host.style.setProperty('display', 'block', 'important');
+      if (this.host) {
+        this.host.style.setProperty('display', 'block', 'important');
+        this.applyPositionStyles(this.host, this.currentPosition);
+      }
       if (this.box) {
         this.box.className = 'quick-notify-box visible error';
         this.box.textContent = this.formatErrorMessage(msg);
@@ -451,8 +659,15 @@
 
         this.timerId = setTimeout(() => {
           this.hide();
-        }, Math.max(2500, this.currentDurationMs));
+        }, Math.max(5000, this.currentDurationMs));
       }
+
+      console.log('[Moodle AI] NOTIFICATION_RENDER_CALLED:', { type: 'error', msg });
+      console.log('[Moodle AI] NOTIFICATION_VISIBLE:', {
+        hostDisplay: this.host?.style?.display,
+        boxClass: this.box?.className,
+        text: this.box?.textContent
+      });
     }
 
     hide() {
