@@ -1457,21 +1457,25 @@
       }
     } catch (err) {
       if (thisRequestId !== currentRequestId) return;
-      if (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('abort'))) {
+      const isCancellation = err.name === 'AbortError' ||
+        (err.message && (
+          err.message.toLowerCase().includes('abort') ||
+          err.message.toLowerCase().includes('superseded') ||
+          err.message.toLowerCase().includes('canceled') ||
+          err.message.toLowerCase().includes('cancelled')
+        ));
+      if (isCancellation) {
         return; // Normal cancellation of superseded request
       }
       const isContextInv = err.message && (err.message.includes('context invalidated') || err.message.includes('Extension context'));
       if (isContextInv) {
-        console.warn('[Moodle AI] Solve error: Extension context invalidated. Tab reload required.');
-      } else {
-        console.error('[Moodle AI] Solve error:', err.message);
+        console.info('[Moodle AI] Tab reload required after extension update.');
+        if (notif) notif.showError('Please refresh this page (Cmd+R or F5)');
+        return;
       }
-      let errMsg = err.message || 'Failed to solve question';
-      if (isContextInv) {
-        errMsg = 'Please refresh this page (Cmd+R or F5)';
-      }
+      console.warn('[Moodle AI] Solve notice:', err.message);
       if (notif) {
-        notif.showError(errMsg);
+        notif.showError(err.message || 'Failed to solve question');
       }
     }
   }
@@ -1619,16 +1623,24 @@
         notif.showAnswer(lastAnswer);
       }
     } catch (err) {
-      if (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('abort'))) {
+      const isCancellation = err.name === 'AbortError' ||
+        (err.message && (
+          err.message.toLowerCase().includes('abort') ||
+          err.message.toLowerCase().includes('superseded') ||
+          err.message.toLowerCase().includes('canceled') ||
+          err.message.toLowerCase().includes('cancelled')
+        ));
+      if (isCancellation) {
         return; // Normal cancellation of superseded request
       }
       const isContextInv = err.message && (err.message.includes('context invalidated') || err.message.includes('Extension context'));
       if (isContextInv) {
-        console.warn('[Moodle AI] Screenshot solve error: Extension context invalidated. Tab reload required.');
-      } else {
-        console.error('[Moodle AI] Screenshot solve error:', err.message);
+        console.info('[Moodle AI] Tab reload required after extension update.');
+        if (notif) notif.showError('Please refresh this page (Cmd+R or F5)');
+        return;
       }
-      if (notif) notif.showError(isContextInv ? 'Please refresh this page (Cmd+R or F5)' : (err.message || 'Vision solve failed'));
+      console.warn('[Moodle AI] Screenshot solve notice:', err.message);
+      if (notif) notif.showError(err.message || 'Vision solve failed');
     }
   }
 

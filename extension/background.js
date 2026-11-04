@@ -1051,7 +1051,11 @@ async function executeProviderRouting(payload, provider, rawProvider, targetMode
         });
         if (!res.ok) {
           const errJson = await res.json().catch(() => ({}));
-          throw new Error(errJson.message || errJson.error || `HTTP ${res.status}`);
+          let errMsg = errJson.message || errJson.error || `HTTP ${res.status}`;
+          if (res.status === 429 || /quota|429/i.test(errMsg)) {
+            errMsg = 'Gemini free quota limit reached. Please configure your personal Gemini API key or switch to Ollama in Settings.';
+          }
+          throw new Error(errMsg);
         }
         const data = await res.json();
         await updateRealUsageStats(data.realUsage || { provider: 'gemini', totalTokens: 140 });
@@ -1097,7 +1101,11 @@ async function executeProviderRouting(payload, provider, rawProvider, targetMode
         });
         if (!res.ok) {
           const errJson = await res.json().catch(() => ({}));
-          throw new Error(errJson.message || errJson.error || `HTTP ${res.status}`);
+          let errMsg = errJson.message || errJson.error || `HTTP ${res.status}`;
+          if (res.status === 429 || /quota|429/i.test(errMsg)) {
+            errMsg = 'Gemini free quota limit reached. Please configure your personal Gemini API key or switch to Ollama in Settings.';
+          }
+          throw new Error(errMsg);
         }
         const data = await res.json();
         await updateRealUsageStats(data.realUsage || { provider: 'chatgpt', totalTokens: 140 });
@@ -1179,7 +1187,11 @@ async function executeProviderRouting(payload, provider, rawProvider, targetMode
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.message || errJson.error || `HTTP ${res.status}`);
+        let errMsg = errJson.message || errJson.error || `HTTP ${res.status}`;
+        if (errMsg.includes('does not support image-based questions')) {
+          errMsg = 'The configured provider does not support image-based questions. Please switch to Google Gemini, ChatGPT, or a vision model in Settings.';
+        }
+        throw new Error(errMsg);
       }
       const data = await res.json();
       return { success: true, data: { ...data, isOllama: false, provider: rawProvider } };
