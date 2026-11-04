@@ -40,9 +40,13 @@ flowchart TD
         OllamaLocal["Ollama Service (Port 11434)<br>(gemma3, llama3.2, llava, qwen2-vl)"]
     end
 
+    subgraph CloudFailover["Universal Cloud-to-Ollama Failover"]
+        FailoverEngine["Failover Interceptor<br>(401, 429, 5xx, Network Timeout)"]
+    end
+
     subgraph Cloud["Render Cloud Backend (Node.js & Express)"]
         Router["Express Router & Rate Limiter<br>(server.js)"]
-        Cache["SHA-256 Per-Key Cache<br>(answer.js)"]
+        Cache["SHA-256 Per-Key Cache & Coalescer<br>(answer.js / ollama.js)"]
         LLMEngine["LLM Engine & Pool Manager<br>(llm-provider.js)"]
     end
 
@@ -72,6 +76,10 @@ flowchart TD
     OpenAI -->|"JSON Answer"| LLMEngine
     LLMEngine --> Router
     Router --> ServiceWorker
+
+    GeminiPool -.->|"401 / 429 / 5xx / Timeout"| FailoverEngine
+    OpenAI -.->|"401 / 429 / 5xx / Timeout"| FailoverEngine
+    FailoverEngine ==>|"Instant Fallback"| OllamaLocal
 
     ServiceWorker --> ContentScript
     ContentScript -->|"Single Active Box"| Notification
@@ -178,9 +186,9 @@ In college computer labs where most machines run **Linux** (Ubuntu, Debian, Fedo
 
 ---
 
-## 🔑 Multi-Key Pool & Cloud Failover Engine
+## 🔑 Multi-Key Pool & Universal Cloud-to-Ollama Failover Engine
 
-For cloud mode, the backend includes an intelligent **4-key Gemini pool** with round-robin load distribution and automatic 429 quota failover:
+For cloud mode, the system features both a **4-key Gemini pool** with round-robin load distribution and an automatic **Universal Cloud-to-Ollama Failover Interceptor**:
 
 ```mermaid
 flowchart LR
@@ -202,58 +210,46 @@ flowchart LR
     K1 -.->|429 Rate Limit| K2
     K2 -.->|429 Rate Limit| K3
     K3 -.->|429 Rate Limit| K4
-    K4 -.->|All Keys Rate-Limited| GPT
+    K4 -.->|All Keys Rate-Limited / 401 / Timeout| FallbackToOllama["Failover: Ollama (127.0.0.1:11434)"]
+    GPT -.->|401 / 429 / 5xx / Timeout| FallbackToOllama
+    FallbackToOllama --> Done
 ```
 
-* **Primary High-Speed Model:** `gemini-3.1-flash-lite` (~670ms latency).
-* **Daily Free Capacity:** 4 keys × 1,500 requests/day = **6,000 free questions every 24 hours**.
-* **Zero Silent Cloud Leakage:** When Ollama Local is active, requests are **never** routed to cloud providers.
+### Universal Failover Rules
+1. **Automatic Interception**: If the selected cloud provider fails because of:
+   * Invalid, revoked, or expired API key (`401`)
+   * Quota exceeded or rate limit (`429`)
+   * Request timeout or network / DNS error
+   * Cloud server crash (`5xx`)
+   The request is immediately retried via local Ollama without user intervention.
+2. **Settings Integrity**: The user's selected provider in Settings is preserved. Subsequent requests always attempt the primary provider first.
+3. **Provider Badges & Shift+A Replay**: When failover succeeds, the notification clearly discloses:
+   `"Gemini unavailable — answered using Ollama 🦙"` or `"OpenAI unavailable — answered using Ollama 🦙"`. Pressing <kbd>Shift + A</kbd> accurately recalls the answer with its actual provider badge.
+4. **No Loops**: Cloud-to-cloud failover is prevented to eliminate infinite request loops.
 
 ---
 
-## ⌨️ Keyboard Shortcuts & Controls
+## 🎯 High-Accuracy Multiple-Answer & Option Normalization Engine
 
-| Shortcut | Action | Description |
-| :--- | :--- | :--- |
-| <kbd>Shift + Z</kbd> | **Smart Solve** | Extracts active text or image question + options and displays answer badge. |
-| <kbd>Shift + X</kbd> | **Stealth Snip** | Drag-select any area with 100% normal screen brightness. Direct answer displays in corner. |
-| <kbd>Shift + A</kbd> | **Repeat Answer** | Re-displays the last answer from cache/storage without making any API request. |
-| <kbd>Esc</kbd> | **Cancel Snip** | Cancels the screen selection immediately. |
-
-> **Typing Safety**: Shortcuts are automatically disabled while typing in `<input>`, `<textarea>`, or `contenteditable` elements to prevent accidental triggers.
-
----
-
-## 📁 File-by-File Breakdown
-
-### Chrome Extension (`/extension`)
-| File | Purpose |
-| :--- | :--- |
-| [`manifest.json`](file:///Users/swapnil/Documents/extention/extension/manifest.json) | Chrome Manifest V3 configuration, permissions (`activeTab`, `storage`, `scripting`, `declarativeNetRequest`), host permissions (`<all_urls>`), and keyboard commands. |
-| [`background.js`](file:///Users/swapnil/Documents/extention/extension/background.js) | Background service worker. Direct Ollama engine, `declarativeNetRequest` Origin-rewrite rules, Gemini key failover, and tab screenshot capture. |
-| [`moodle-content.js`](file:///Users/swapnil/Documents/extention/extension/moodle-content.js) | Core quiz content script. Extracts question text/options, normalizes option letters (`A-F`), converts images to base64, coordinates shortcuts with 450ms debounce. |
-| [`screenshot-handler.js`](file:///Users/swapnil/Documents/extention/extension/screenshot-handler.js) | Interactive stealth snipping tool. Transparent crosshair selection, devicePixelRatio coordinate normalization, in-memory HTML5 Canvas crop, and JPEG compression. |
-| [`notification.js`](file:///Users/swapnil/Documents/extention/extension/notification.js) | Centralized Shadow DOM notification manager. Strictly one active notification on screen, top-frame delegation, in-place word morphing, and white minimalist theme. |
-| [`popup.html`](file:///Users/swapnil/Documents/extention/extension/popup.html) / [`popup.js`](file:///Users/swapnil/Documents/extention/extension/popup.js) | Clean popup interface with active model tags, connection status indicators, and 1-click provider switching. |
-| [`settings.html`](file:///Users/swapnil/Documents/extention/extension/settings.html) / [`settings.js`](file:///Users/swapnil/Documents/extention/extension/settings.js) | Settings dashboard for Ollama URL configuration, model refresh, capability inspection, and notification position customization. |
-| [`styles.css`](file:///Users/swapnil/Documents/extention/extension/styles.css) | Shared extension UI styles adhering to the pure white theme (`#FFFFFF`). |
-
-### Backend Service (`/backend`)
-| File | Purpose |
-| :--- | :--- |
-| [`server.js`](file:///Users/swapnil/Documents/extention/backend/server.js) | Optional Express server with Helmet security headers and CORS origin verification bound to `127.0.0.1`. |
-| [`routes/answer.js`](file:///Users/swapnil/Documents/extention/backend/routes/answer.js) | Primary API route (`POST /api/answer`). SHA-256 caching per question/key and LLM engine routing. |
-| [`routes/ollama.js`](file:///Users/swapnil/Documents/extention/backend/routes/ollama.js) | Local Ollama endpoints (`GET /api/ollama/status`, `GET /api/ollama/models`, `POST /api/solve`). |
-| [`services/ollama-service.js`](file:///Users/swapnil/Documents/extention/backend/services/ollama-service.js) | Offline Ollama pipeline, dynamic capability detection, multi-strategy option matching, and temperature 0.1 inference. |
-| [`services/subject-expert.js`](file:///Users/swapnil/Documents/extention/backend/services/subject-expert.js) | Academic subject classifier (DBMS, OS, CN, DAA, TOC, AISC, SE, Math, Programming) injecting targeted reasoning guidelines. |
-| [`services/llm-provider.js`](file:///Users/swapnil/Documents/extention/backend/services/llm-provider.js) | Multi-key Gemini pool manager, OpenAI integration, vision capability verification, and resilient 3-tier JSON parser. |
-| [`validation/answer-schema.js`](file:///Users/swapnil/Documents/extention/backend/validation/answer-schema.js) | Strict Zod validation schemas validating question types, options, base64 image strings, and LLM output format. |
+1. **Option A Bias Elimination**: 
+   * Precedence is given to `parsed.option` and `parsed.selected_option` over generic option lists, preventing small models from accidentally picking option `A` when `B`, `C`, or `D` is the correct answer.
+   * Eliminated hardcoded index `0` fallback.
+   * Added numeric mapping (`1->A, 2->B, 3->C, 4->D`).
+2. **Deep Container & Sibling Extraction**: 
+   * Content script traverses `.r0, .r1, .choice, .form-check, li, tr` and sibling nodes.
+   * Detects and discards dummy `Option 1` placeholders, falling back to raw DOM line scans to ensure real option text is provided to the AI.
+3. **Question Type Classification**: Automatically categorizes questions into `SINGLE_CHOICE`, `MULTIPLE_CHOICE`, `OPEN_ENDED`, or `UNKNOWN`.
+4. **Independent Option Evaluation**: Prompts instruct models to test each option independently for multiple-answer questions, returning all correct choices (e.g., `A, B, D`).
+5. **Universal AI Performance Optimization**:
+   * **In-Flight Request Coalescing**: Duplicate parallel requests share an active promise to eliminate redundant local GPU/CPU load.
+   * **SHA-256 In-Memory Cache**: Repeated queries return instantaneously (~2ms).
+   * **Socket Keep-Alive**: Preserved HTTP keep-alive connections eliminate TCP handshake overhead.
 
 ---
 
 ## 🧪 Automated Testing & Verification Suite
 
-The repository includes a comprehensive automated test suite with **75 tests (100% passing)**:
+The repository includes a comprehensive automated test suite with **152 tests (100% passing)**:
 
 ```bash
 npm test
@@ -267,38 +263,19 @@ npm test
 ✔ POST /api/auth/start generates valid Google Gemini OAuth flow with PKCE
 ✔ Subject Expert: Correctly classifies all academic domains (DBMS, OS, CN, DAA, TOC, AISC, SE, Math, Programming)
 ✔ Benchmark Suite: Offline Ollama Pipeline Evaluates 12 Benchmark Questions
-✔ Fixture 1: Single-Choice Question extraction
-✔ Fixture 2: Multiple-Answer Question extraction
-✔ Fixture 3: True/False Question extraction
-✔ Fixture 4: Numerical Question extraction
-✔ Fixture 5: Formatted Text and Math preservation
-✔ Fixture 6: Code snippet preservation
-✔ Fixture 7: Multi-Question Page avoids mixing options from neighboring questions
-✔ Fixture 8: Dynamically loaded AJAX question extraction
-✔ Fixture 9: Custom Modern Quiz Layout (User Screenshot Replica) extraction
-✔ GeeksforGeeks Layout: Shift+Z automatically extracts question and options
-✔ Shortcut 1 (Shift+Z): solveCurrentQuestion extracts text and stores lastAnswer
-✔ Shortcut 2 (Shift+X): solveQuestionScreenshot captures tab and sends vision payload
-✔ Shortcut 3 (Shift+A): showLastAnswerAgain re-displays previous answer without new API request
-✔ MoodleQuickNotification: renders answer cleanly and handles positions
-✔ Notification Manager: Strictly 1 host and 1 box in DOM, replaces in-place without overlapping
-✔ Notification Manager: Child frame does NOT inject DOM and delegates to window.top
-✔ Moodle Matching Question: extracts matching table rows and select dropdown options
-✔ Negative Question Handling: preserves negative qualifier in extracted prompt
-✔ Shift + Z on ordinary text MCQ with broken/inaccessible image solves question using extracted text
-✔ Selection overlay styling: subtle border with zero blue fill
-✔ Custom card-based questions: extracts card options and text without radio inputs
-✔ Shift + X preserves normal page brightness with transparent overlay and updates answer popup in-place
-✔ Capability Detection: Text models identify as Text
-✔ Capability Detection: Vision models identify as Vision
-✔ Model Detection: Multiple installed models with mixed capabilities
-✔ Model Selection: POST /api/solve rejects missing model parameter
-✔ AI Generation: Text question evaluation via POST /api/solve
-✔ Manifest: Ensures all_frames is enabled for iframe quiz compatibility
-✔ POST /api/answer succeeds with single_choice question
-✔ Cache separates different providers and models for same question
+✔ Direct Extension Content Extraction & Notification (40 tests)
+✔ Model Selection, Local Vision, Stream & Error Recovery (8 tests)
+✔ Cloud-to-Ollama Universal Failover Matrix (14 tests)
+✔ Provider Routing, Model Switching & Safe Logging (64 tests)
+✔ Master Ollama Accuracy & Multi-Answer Suite (16 tests)
+  - Single-choice returns exactly one correct answer (A, B, C, D)
+  - When correct answer is B, returns B and does NOT default to A
+  - Multiple-choice preserves all correct options (e.g. A, B, D)
+  - 8-10 options (A-J) evaluated with exact option alignment
+  - Classification handles single, multi, and open-ended structures
+  - In-flight request coalescing and in-memory hash caching verified
 
-ℹ tests 75 | ℹ pass 75 | ℹ fail 0 (100% Passing)
+ℹ tests 152 | ℹ pass 152 | ℹ fail 0 (100% Passing)
 ```
 
 ---

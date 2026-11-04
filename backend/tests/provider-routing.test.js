@@ -215,27 +215,31 @@ test('Provider Isolation: When OpenAI is selected, request routes strictly to Op
   assert.equal(res.data.provider, 'openai');
 });
 
-test('Fallback Isolation: Gemini failure does NOT silently fall back to Ollama or OpenAI', async () => {
+test('Failover Test 1: Gemini invalid API key -> Ollama succeeds', async () => {
+  let geminiCalled = false;
   let ollamaCalled = false;
-  let openaiCalled = false;
 
   const env = setupBackgroundSandbox({
     activeProvider: 'gemini',
     geminiApiKey: 'AIzaSyInvalidKey',
-    ollamaUrl: 'http://127.0.0.1:11434'
+    ollamaUrl: 'http://127.0.0.1:11434',
+    ollamaSelectedModel: 'gemma3:4b'
   }, async (url) => {
     if (url.includes('generativelanguage.googleapis.com')) {
+      geminiCalled = true;
       return {
         ok: false,
         status: 400,
         text: async () => JSON.stringify({ error: { message: 'API_KEY_INVALID' } })
       };
     }
-    if (url.includes('11434')) {
+    if (url.includes('11434/api/generate')) {
       ollamaCalled = true;
-    }
-    if (url.includes('openai.com')) {
-      openaiCalled = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'B', answer: 'Ollama Fallback Solution' }) })
+      };
     }
     throw new Error(`Unexpected url: ${url}`);
   });
@@ -245,14 +249,124 @@ test('Fallback Isolation: Gemini failure does NOT silently fall back to Ollama o
     payload: { question: 'Test question', options: [] }
   });
 
-  assert.equal(res.success, false, 'Request must report failure');
-  assert.ok(res.error.includes('Invalid API key') || res.error.includes('Gemini Authentication Error'));
-  assert.equal(ollamaCalled, false, 'Must not fallback to Ollama on Gemini failure');
-  assert.equal(openaiCalled, false, 'Must not fallback to OpenAI on Gemini failure');
+  assert.equal(geminiCalled, true, 'Gemini must be attempted first');
+  assert.equal(ollamaCalled, true, 'Ollama must be called as fallback');
+  assert.equal(res.success, true);
+  assert.equal(res.data.isOllama, true);
+  assert.equal(res.data.provider, 'ollama');
+  assert.equal(res.data.source, 'ollama_fallback');
+  assert.equal(res.data.fallbackNotice, 'Gemini unavailable — answered using Ollama 🦙');
 });
 
-test('Fallback Isolation: OpenAI quota failure does NOT silently fall back to Gemini or Ollama', async () => {
-  let geminiCalled = false;
+test('Failover Test 2: Gemini 429 quota -> Ollama succeeds', async () => {
+  let ollamaCalled = false;
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSyQuotaExhausted',
+    ollamaUrl: 'http://127.0.0.1:11434',
+    ollamaSelectedModel: 'gemma3:4b'
+  }, async (url) => {
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return {
+        ok: false,
+        status: 429,
+        text: async () => JSON.stringify({ error: { message: 'RESOURCE_EXHAUSTED' } })
+      };
+    }
+    if (url.includes('11434/api/generate')) {
+      ollamaCalled = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'A', answer: 'Recovered from 429' }) })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Test question', options: [] }
+  });
+
+  assert.equal(ollamaCalled, true);
+  assert.equal(res.success, true);
+  assert.equal(res.data.fallbackNotice, 'Gemini unavailable — answered using Ollama 🦙');
+});
+
+test('Failover Test 3: Gemini timeout/network/500 -> Ollama succeeds', async () => {
+  let ollamaCalled = false;
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSyValid',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('generativelanguage.googleapis.com')) {
+      throw new Error('Failed to fetch (DNS / Network Timeout)');
+    }
+    if (url.includes('11434/api/generate')) {
+      ollamaCalled = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'C', answer: 'Network Recovered' }) })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Test question', options: [] }
+  });
+
+  assert.equal(ollamaCalled, true);
+  assert.equal(res.success, true);
+  assert.equal(res.data.fallbackNotice, 'Gemini unavailable — answered using Ollama 🦙');
+});
+
+test('Failover Test 4: OpenAI invalid API key -> Ollama succeeds', async () => {
+  let openaiCalled = false;
+  let ollamaCalled = false;
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'openai',
+    openaiApiKey: 'sk-proj-InvalidKey',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('api.openai.com')) {
+      openaiCalled = true;
+      return {
+        ok: false,
+        status: 401,
+        text: async () => JSON.stringify({ error: { message: 'Incorrect API key provided' } })
+      };
+    }
+    if (url.includes('11434/api/generate')) {
+      ollamaCalled = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'A', answer: 'OpenAI 401 Recovered' }) })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Test question', options: [] }
+  });
+
+  assert.equal(openaiCalled, true);
+  assert.equal(ollamaCalled, true);
+  assert.equal(res.success, true);
+  assert.equal(res.data.fallbackNotice, 'OpenAI unavailable — answered using Ollama 🦙');
+});
+
+test('Failover Test 5: OpenAI 429 quota -> Ollama succeeds', async () => {
   let ollamaCalled = false;
 
   const env = setupBackgroundSandbox({
@@ -267,8 +381,83 @@ test('Fallback Isolation: OpenAI quota failure does NOT silently fall back to Ge
         text: async () => JSON.stringify({ error: { message: 'You exceeded your current quota' } })
       };
     }
-    if (url.includes('googleapis.com')) {
+    if (url.includes('11434/api/generate')) {
+      ollamaCalled = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'D', answer: 'OpenAI 429 Recovered' }) })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Test question', options: [] }
+  });
+
+  assert.equal(ollamaCalled, true);
+  assert.equal(res.success, true);
+  assert.equal(res.data.fallbackNotice, 'OpenAI unavailable — answered using Ollama 🦙');
+});
+
+test('Failover Test 6: OpenAI timeout/network/500 -> Ollama succeeds', async () => {
+  let ollamaCalled = false;
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'openai',
+    openaiApiKey: 'sk-proj-ValidKey',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('api.openai.com')) {
+      return {
+        ok: false,
+        status: 500,
+        text: async () => JSON.stringify({ error: { message: 'Internal Server Error' } })
+      };
+    }
+    if (url.includes('11434/api/generate')) {
+      ollamaCalled = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'A', answer: 'OpenAI 500 Recovered' }) })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Test question', options: [] }
+  });
+
+  assert.equal(ollamaCalled, true);
+  assert.equal(res.success, true);
+  assert.equal(res.data.fallbackNotice, 'OpenAI unavailable — answered using Ollama 🦙');
+});
+
+test('Failover Test 7: Primary provider succeeds -> Ollama is never called', async () => {
+  let geminiCalled = false;
+  let ollamaCalled = false;
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSyValidKey',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('generativelanguage.googleapis.com')) {
       geminiCalled = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{
+            content: { parts: [{ text: JSON.stringify({ option: 'B', answer: 'Gemini Primary Success' }) }] }
+          }]
+        })
+      };
     }
     if (url.includes('11434')) {
       ollamaCalled = true;
@@ -281,10 +470,252 @@ test('Fallback Isolation: OpenAI quota failure does NOT silently fall back to Ge
     payload: { question: 'Test question', options: [] }
   });
 
-  assert.equal(res.success, false, 'Request must report failure');
-  assert.ok(res.error.includes('Quota Error') || res.error.includes('quota'));
-  assert.equal(geminiCalled, false, 'Must not fallback to Gemini on OpenAI quota error');
-  assert.equal(ollamaCalled, false, 'Must not fallback to Ollama on OpenAI quota error');
+  assert.equal(geminiCalled, true);
+  assert.equal(ollamaCalled, false, 'Ollama must never be called when primary provider succeeds');
+  assert.equal(res.success, true);
+  assert.equal(res.data.provider, 'gemini');
+  assert.equal(res.data.isOllama, false);
+});
+
+test('Failover Test 8: Ollama unavailable -> clear combined error', async () => {
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSyBadKey',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return {
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: { message: 'API_KEY_INVALID' } })
+      };
+    }
+    if (url.includes('11434/api/generate')) {
+      throw new Error('connect ECONNREFUSED 127.0.0.1:11434');
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Test question', options: [] }
+  });
+
+  assert.equal(res.success, false);
+  assert.ok(res.error.includes('Gemini unavailable'));
+  assert.ok(res.error.includes('Fallback to Ollama failed'));
+  assert.ok(res.error.includes('Ollama is not running'));
+});
+
+test('Failover Test 9: Vision request -> image preserved during fallback', async () => {
+  let receivedImages = [];
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSyBadKey',
+    ollamaUrl: 'http://127.0.0.1:11434',
+    ollamaSelectedModel: 'gemma3:4b'
+  }, async (url, options) => {
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return { ok: false, status: 400, text: async () => '{"error":"bad_key"}' };
+    }
+    if (url.includes('11434/api/generate')) {
+      const parsedBody = JSON.parse(options.body);
+      receivedImages = parsedBody.images || [];
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'A', answer: 'Vision Fallback' }) })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const testImage = 'data:image/jpeg;base64,sampleBase64ImageData123';
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Vision question', image: testImage, options: [] }
+  });
+
+  assert.equal(res.success, true);
+  assert.equal(receivedImages.length, 1, 'Fallback must receive preserved screenshot');
+  assert.equal(receivedImages[0], 'sampleBase64ImageData123');
+});
+
+test('Failover Test 10: Multiple-answer request -> all correct options preserved', async () => {
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSy429Key',
+    ollamaUrl: 'http://127.0.0.1:11434',
+    ollamaSelectedModel: 'gemma3:4b'
+  }, async (url) => {
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return { ok: false, status: 429, text: async () => '{"error":"quota"}' };
+    }
+    if (url.includes('11434/api/generate')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          response: JSON.stringify({
+            isMultiple: true,
+            options: ['A', 'B', 'D'],
+            option: 'A, B, D',
+            answer: 'A — Text 1\nB — Text 2\nD — Text 3'
+          })
+        })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: {
+      question: 'Which are characteristics of a good SRS?',
+      options: [
+        { id: 'A', text: 'Text 1' },
+        { id: 'B', text: 'Text 2' },
+        { id: 'C', text: 'Text 3' },
+        { id: 'D', text: 'Text 4' }
+      ],
+      isMultiple: true
+    }
+  });
+
+  assert.equal(res.success, true);
+  assert.equal(res.data.isMultiple, true);
+  assert.deepEqual(Array.from(res.data.options), ['A', 'B', 'D']);
+  assert.equal(res.data.option, 'A, B, D');
+});
+
+test('Failover Test 11: Shift+A replay preserves actual Ollama provider badge and notice', async () => {
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSyBadKey',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return { ok: false, status: 400, text: async () => '{"error":"bad_key"}' };
+    }
+    if (url.includes('11434/api/generate')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'A', answer: 'Replay Test Answer' }) })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Replay question', options: [] }
+  });
+
+  assert.equal(res.success, true);
+  assert.equal(res.data.provider, 'ollama');
+  assert.equal(res.data.isOllama, true);
+  assert.equal(res.data.fallbackNotice, 'Gemini unavailable — answered using Ollama 🦙');
+});
+
+test('Failover Test 12: Next request tries original selected provider first', async () => {
+  let geminiAttempts = 0;
+  let ollamaAttempts = 0;
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSyKey',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('generativelanguage.googleapis.com')) {
+      geminiAttempts++;
+      return { ok: false, status: 500, text: async () => '{"error":"server error"}' };
+    }
+    if (url.includes('11434/api/generate')) {
+      ollamaAttempts++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ response: JSON.stringify({ option: 'A', answer: 'Next Request Solved' }) })
+      };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  // Request 1
+  await env.sendMessage({ action: 'ANALYZE_QUESTION', payload: { question: 'Question 1', options: [] } });
+  assert.equal(geminiAttempts, 1);
+  assert.equal(ollamaAttempts, 1);
+  assert.equal(env.storageData.activeProvider, 'gemini', 'Storage provider must remain unchanged');
+
+  // Request 2 (independent)
+  await env.sendMessage({ action: 'ANALYZE_QUESTION', payload: { question: 'Question 2', options: [] } });
+  assert.equal(geminiAttempts, 2, 'Gemini must be attempted first on subsequent request');
+  assert.equal(ollamaAttempts, 2);
+  assert.equal(env.storageData.activeProvider, 'gemini');
+});
+
+test('Failover Test 13: Ollama selected manually -> no redundant fallback', async () => {
+  let geminiCalled = false;
+  let openaiCalled = false;
+  let ollamaCalled = 0;
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'ollama',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('googleapis.com')) geminiCalled = true;
+    if (url.includes('openai.com')) openaiCalled = true;
+    if (url.includes('11434/api/generate')) {
+      ollamaCalled++;
+      return { ok: false, status: 500, text: async () => 'Ollama error' };
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Ollama question', options: [] }
+  });
+
+  assert.equal(ollamaCalled, 1, 'Ollama attempted exactly once');
+  assert.equal(geminiCalled, false, 'No fallback to Gemini when Ollama selected');
+  assert.equal(openaiCalled, false, 'No fallback to OpenAI when Ollama selected');
+  assert.equal(res.success, false);
+});
+
+test('Failover Test 14: No cloud-to-cloud fallback or fallback loops', async () => {
+  let openaiCalled = false;
+  let geminiCalled = false;
+
+  const env = setupBackgroundSandbox({
+    activeProvider: 'gemini',
+    geminiApiKey: 'AIzaSyBad',
+    ollamaUrl: 'http://127.0.0.1:11434'
+  }, async (url) => {
+    if (url.includes('googleapis.com')) {
+      geminiCalled = true;
+      return { ok: false, status: 401, text: async () => '{"error":"bad_key"}' };
+    }
+    if (url.includes('api.openai.com')) {
+      openaiCalled = true;
+      return { ok: true, json: async () => ({}) };
+    }
+    if (url.includes('11434/api/generate')) {
+      throw new Error('connect ECONNREFUSED');
+    }
+    throw new Error(`Unexpected url: ${url}`);
+  });
+
+  const res = await env.sendMessage({
+    action: 'ANALYZE_QUESTION',
+    payload: { question: 'Loop check question', options: [] }
+  });
+
+  assert.equal(geminiCalled, true);
+  assert.equal(openaiCalled, false, 'Gemini must NEVER fall back to OpenAI (no cloud-to-cloud)');
+  assert.equal(res.success, false);
 });
 
 test('Connection Test: Gemini test reports connection success and invalid key correctly', async () => {

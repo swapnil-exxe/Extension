@@ -1083,8 +1083,25 @@
 
         if (!text && input.parentElement) {
           const parentClone = input.parentElement.cloneNode(true);
-          parentClone.querySelectorAll('input').forEach(i => i.remove());
+          parentClone.querySelectorAll('input, [role="radio"], [role="checkbox"]').forEach(i => i.remove());
           text = extractFormattedText(parentClone);
+        }
+
+        if (!text) {
+          const rowContainer = input.closest('.r0, .r1, .choice, .option, .answer, .form-check, li, tr, [class*="option" i], [class*="choice" i], [class*="answer" i]');
+          if (rowContainer) {
+            const rowClone = rowContainer.cloneNode(true);
+            rowClone.querySelectorAll('input, [role="radio"], [role="checkbox"], .answernumber').forEach(i => i.remove());
+            text = extractFormattedText(rowClone);
+          }
+        }
+
+        if (!text && input.nextElementSibling) {
+          text = extractFormattedText(input.nextElementSibling);
+        }
+
+        if (!text && input.parentElement && input.parentElement.nextElementSibling) {
+          text = extractFormattedText(input.parentElement.nextElementSibling);
         }
 
         if (!text && input.nextSibling) {
@@ -1122,6 +1139,16 @@
         elementId: input.id || ''
       });
     });
+
+    // If all extracted options are dummy fallback placeholders ("Option 1", "Option 2"...), clear them
+    // so that raw text scanning can recover the real question choices
+    const hasOnlyDummyOptions = options.length > 0 && options.every(o => {
+      const stripped = String(o.text || '').replace(/^[A-Z0-9]+[\.\:\)\-]\s*/i, '').trim();
+      return /^Option\s+\d+$/i.test(stripped) || /^Option\s+\d+$/i.test(o.text);
+    });
+    if (hasOnlyDummyOptions) {
+      options.length = 0;
+    }
 
     // 2c. If options array is still empty, scan raw text lines for options
     if (options.length === 0) {
@@ -1431,15 +1458,19 @@
       lastAnswer = {
         question: payload.question || '',
         option: res.option || '',
+        options: res.options || res.optionIds || [],
+        optionIds: res.optionIds || res.options || [],
         answer: res.answer || res.answerText || '',
         reason: res.reason || res.explanation || '',
         explanation: res.explanation || res.reason || '',
+        isMultiple: Boolean(res.isMultiple || (Array.isArray(res.options) && res.options.length > 1) || (typeof res.option === 'string' && res.option.includes(','))),
         confidence: res.confidence,
         status: res.status || 'ok',
         model: res.realUsage?.modelUsed || res.model || '',
         provider: res.provider || (isOllama ? 'ollama' : 'gemini'),
         source: res.source || (isOllama ? 'ollama_fallback' : 'cloud'),
         isOllama: isOllama,
+        fallbackNotice: res.fallbackNotice || '',
         timestamp: Date.now(),
         latencyMs: res.latencyMs || totalClientDurationMs
       };
@@ -1499,19 +1530,48 @@
         return;
       }
 
-      // Opportunistically detect if snipped area overlaps a quiz question element on the page
+      // Opportunistically detect if snipped area overlaps a quiz question element or text on the page
       try {
         const centerX = cropRect.x + cropRect.width / 2;
         const centerY = cropRect.y + cropRect.height / 2;
         const elUnder = document.elementFromPoint(centerX, centerY);
         if (elUnder) {
           const questionContainer = elUnder.closest('.que, .question, [class*="quiz"], [id*="question"]');
+          let data = null;
           if (questionContainer) {
-            const data = extractQuestionData(questionContainer);
-            if (data) {
-              if (!partialText) partialText = data.question;
-              if (Array.isArray(data.options) && data.options.length > 0) {
-                extractedOptions = data.options;
+            data = extractQuestionData(questionContainer);
+          } else {
+            const containerEl = elUnder.closest('article, main, section, [role="main"], .container') || elUnder;
+            data = extractQuestionData(containerEl);
+          }
+          if (data) {
+            if (!partialText && data.question) partialText = data.question;
+            if (Array.isArray(data.options) && data.options.length > 0) {
+              extractedOptions = data.options;
+            }
+          }
+
+          // Fallback: parse text lines directly from snipped element (e.g. write-box, textarea, pre)
+          if (!partialText || extractedOptions.length < 2) {
+            const rawElText = (elUnder.innerText || elUnder.value || elUnder.textContent || '').trim();
+            if (rawElText && (rawElText.includes('\n') || rawElText.length > 15)) {
+              const lines = rawElText.split('\n').map(l => l.trim()).filter(Boolean);
+              const qLines = [];
+              const rawOpts = [];
+              for (const line of lines) {
+                const optMatch = line.match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
+                if (optMatch) {
+                  const id = (optMatch[1] || optMatch[2] || optMatch[3]).toUpperCase();
+                  rawOpts.push({ id, text: `${id}. ${optMatch[4] || line}` });
+                } else if (rawOpts.length === 0) {
+                  qLines.push(line);
+                }
+              }
+              if (qLines.length > 0 && !partialText) {
+                partialText = qLines.join(' ');
+              }
+              if (rawOpts.length >= 2 && extractedOptions.length === 0) {
+                extractedOptions = rawOpts;
               }
             }
           }
@@ -1601,15 +1661,19 @@
       lastAnswer = {
         question: partialText || 'Screen Snippet',
         option: res.option || '',
+        options: res.options || res.optionIds || [],
+        optionIds: res.optionIds || res.options || [],
         answer: res.answer || res.answerText || '',
         reason: res.reason || res.explanation || '',
         explanation: res.explanation || res.reason || '',
+        isMultiple: Boolean(res.isMultiple || (Array.isArray(res.options) && res.options.length > 1) || (typeof res.option === 'string' && res.option.includes(','))),
         confidence: res.confidence || 0.95,
         status: res.status || 'ok',
         model: res.realUsage?.modelUsed || res.model || '',
         provider: res.provider || (isOllama ? 'ollama' : 'gemini'),
         source: res.source || (isOllama ? 'ollama_fallback' : 'cloud'),
         isOllama: isOllama,
+        fallbackNotice: res.fallbackNotice || '',
         timestamp: Date.now()
       };
 

@@ -458,7 +458,8 @@
       this.ensureDOM();
       this.clearTimer();
 
-      const { option, answer, reason, explanation, isOllama, provider, source, model, isMultiple, optionIds, options } = payload || {};
+      const { option, answer, reason, explanation, isOllama, provider, source, model, isMultiple, optionIds, options, fallbackNotice } = payload || {};
+      this.fallbackNotice = fallbackNotice || '';
       let text = '';
       const hasRealOption = option && String(option).trim() && String(option).toUpperCase() !== 'UNCERTAIN';
       const hasRealAnswer = answer && String(answer).trim() && !String(answer).toUpperCase().startsWith('UNCERTAIN');
@@ -573,6 +574,19 @@
       } else {
         this.box.style.setProperty('border', 'none', 'important');
         this.box.style.setProperty('box-shadow', 'none', 'important');
+      }
+
+      // 0. Fallback notice banner (e.g. "Gemini unavailable — answered using Ollama 🦙")
+      if (this.fallbackNotice) {
+        const noticeDiv = document.createElement('div');
+        noticeDiv.className = 'fallback-notice';
+        noticeDiv.textContent = this.fallbackNotice;
+        noticeDiv.style.setProperty('font-size', '11px', 'important');
+        noticeDiv.style.setProperty('font-weight', '600', 'important');
+        noticeDiv.style.setProperty('margin-bottom', '4px', 'important');
+        noticeDiv.style.setProperty('color', '#b45309', 'important');
+        noticeDiv.style.setProperty('display', 'block', 'important');
+        this.box.appendChild(noticeDiv);
       }
 
       // 1. Answer row: compact line [Option — Answer Text] [🦙] [⋮]

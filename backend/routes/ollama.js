@@ -1,8 +1,20 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import { checkOllamaStatus, getInstalledModels, callOllama, getOllamaDiagnostics } from '../services/ollama-service.js';
 import { validateAnswerRequest } from '../validation/answer-schema.js';
 
 const router = Router();
+
+const solveCache = new Map();
+const SOLVE_CACHE_TTL_MS = 600000; // 10 minutes
+const inFlightSolveRequests = new Map();
+
+function computeSolveHash(payload, model) {
+  const q = String(payload.question || '').trim();
+  const opts = (payload.options || []).map(o => `${o.id}:${o.text}`).join('|');
+  const img = payload.image ? payload.image.slice(0, 100) : (Array.isArray(payload.images) ? payload.images.map(i => i.slice(0, 50)).join(',') : '');
+  return crypto.createHash('sha256').update(`${model || 'default'}:${q}:${opts}:${img}`).digest('hex');
+}
 
 /**
  * GET /api/ollama/status
@@ -93,10 +105,38 @@ router.post('/solve', async (req, res) => {
       });
     }
 
-    const answerResult = await callOllama(payload, {
+    const hash = computeSolveHash(payload, payload.model);
+    const cached = solveCache.get(hash);
+    if (cached && (Date.now() - cached.timestamp < SOLVE_CACHE_TTL_MS) && req.body.skipCache !== true) {
+      return res.json({
+        ...cached.data,
+        cached: true,
+        latencyMs: Date.now() - startTime
+      });
+    }
+
+    if (inFlightSolveRequests.has(hash)) {
+      const existing = await inFlightSolveRequests.get(hash);
+      return res.json({
+        ...existing,
+        cached: true,
+        latencyMs: Date.now() - startTime
+      });
+    }
+
+    const execPromise = callOllama(payload, {
       ollamaUrl: req.body.ollamaUrl || req.query.ollamaUrl,
       model: payload.model
     });
+
+    inFlightSolveRequests.set(hash, execPromise);
+    let answerResult;
+    try {
+      answerResult = await execPromise;
+      solveCache.set(hash, { data: answerResult, timestamp: Date.now() });
+    } finally {
+      inFlightSolveRequests.delete(hash);
+    }
 
     const latencyMs = Date.now() - startTime;
     return res.json({

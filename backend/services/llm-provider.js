@@ -223,7 +223,13 @@ function buildUserPrompt({ questionType, question, options, hasImage }) {
     });
   }
 
-  prompt += `\nOutput strictly valid JSON with "answer", "option", and "status": "success".`;
+  const isMulti = questionType === 'multiple_choice' || /\b(select all|choose all|which (?:of the following|of these)?\s+are|which are|all that apply|check all|select multiple|more than one|select each|mark all|select two|select three|select (?:2|3|4)|choose two|choose three|choose (?:2|3|4)|multiple correct|any of the following are|identify all)\b/i.test(question || '');
+
+  if (isMulti) {
+    prompt += `\nThis is a MULTIPLE-ANSWER question. Evaluate EVERY option independently. Output strictly valid JSON with "option": "A, B, ...", "optionIds": ["A", "B", ...], "answer": "combined text of all correct options", "isMultiple": true, and "status": "success".`;
+  } else {
+    prompt += `\nIf multiple options are correct or the question asks for multiple characteristics ("which are", "select all"), identify ALL of them with "option": "A, B, ..." and "isMultiple": true. Otherwise select the single best option. Output strictly valid JSON with "answer", "option", and "status": "success".`;
+  }
   return prompt;
 }
 

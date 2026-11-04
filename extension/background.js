@@ -378,7 +378,7 @@ RULES:
 /**
  * Extracts candidate option letters from parsed AI JSON output
  */
-function extractCandidateLetters(parsed) {
+function extractCandidateLetters(parsed, isMulti = false) {
   const letters = [];
   const seen = new Set();
 
@@ -387,7 +387,10 @@ function extractCandidateLetters(parsed) {
     const str = String(raw).trim();
     const m = str.match(/^([A-Za-z0-9]+)[\.\:\)\-]?/);
     if (m) {
-      const up = m[1].toUpperCase();
+      let up = m[1].toUpperCase();
+      if (/^[1-9]$/.test(up)) {
+        up = String.fromCharCode(64 + parseInt(up, 10)); // 1->A, 2->B, 3->C, 4->D
+      }
       if (up.length <= 2 && up !== 'UNCERTAIN' && !seen.has(up)) {
         seen.add(up);
         letters.push(up);
@@ -395,18 +398,25 @@ function extractCandidateLetters(parsed) {
     }
   }
 
-  if (Array.isArray(parsed.options)) {
-    parsed.options.forEach(addLetter);
-  }
-  if (Array.isArray(parsed.optionIds)) {
-    parsed.optionIds.forEach(addLetter);
-  }
-
-  const rawOption = String(parsed.option || parsed.choice || '').trim();
+  // 1. Chosen direct option takes precedence over auxiliary arrays
+  const rawOption = String(parsed.option || parsed.selected_option || parsed.choice || '').trim();
   if (rawOption && rawOption.toUpperCase() !== 'UNCERTAIN') {
     const parts = rawOption.split(/[,;&]|\band\b/i);
     for (const part of parts) {
       addLetter(part);
+    }
+  }
+
+  // 2. Options array only added if multiple-choice question or if direct option was empty
+  const isMultipleContext = Boolean(isMulti || parsed.isMultiple || parsed.question_type === 'multiple');
+  if (Array.isArray(parsed.options)) {
+    if (isMultipleContext || letters.length === 0) {
+      parsed.options.forEach(addLetter);
+    }
+  }
+  if (Array.isArray(parsed.optionIds)) {
+    if (isMultipleContext || letters.length === 0) {
+      parsed.optionIds.forEach(addLetter);
     }
   }
 
@@ -419,10 +429,13 @@ function extractCandidateLetters(parsed) {
 function normalizeAnswerPayload(parsed, payload, model, provider) {
   const options = Array.isArray(payload.options) ? payload.options : [];
   const questionText = String(payload.question || '').trim();
+  const multiRegex = /\b(select all|choose all|which (?:of the following|of these)?\s+are|which are|all that apply|check all|select multiple|more than one|select each|mark all|select two|select three|select (?:2|3|4)|choose two|choose three|choose (?:2|3|4)|multiple correct|any of the following are|identify all)\b/i;
+  const combinedContext = `${questionText} ${parsed.question || ''} ${parsed.reason || ''} ${parsed.explanation || ''} ${parsed.answer || ''}`;
   const isMultiWording = Boolean(payload.isMultiple) ||
-    /\b(select all|choose all|which (?:of the following|of these)?\s+are|which are|all that apply|check all|select multiple|more than one|select each|mark all|select two|select three|select (?:2|3|4)|choose two|choose three|choose (?:2|3|4)|multiple correct|any of the following are|identify all)\b/i.test(questionText);
+    Boolean(parsed.isMultiple) ||
+    multiRegex.test(combinedContext);
 
-  let candidateLetters = extractCandidateLetters(parsed);
+  let candidateLetters = extractCandidateLetters(parsed, isMultiWording);
 
   if (candidateLetters.length === 0 && (parsed.reason || parsed.explanation)) {
     const combinedReason = `${parsed.reason || ''} ${parsed.explanation || ''}`;
@@ -433,15 +446,29 @@ function normalizeAnswerPayload(parsed, payload, model, provider) {
     }
   }
 
+  const parsedHasMultipleAnswers = Boolean(
+    (parsed.isMultiple === true || parsed.question_type === 'multiple') ||
+    (parsed.isMultiple !== false && parsed.question_type !== 'single' && (
+      (Array.isArray(parsed.options) && parsed.options.length > 1 && (options.length === 0 || parsed.options.length < options.length)) ||
+      (Array.isArray(parsed.optionIds) && parsed.optionIds.length > 1) ||
+      (typeof parsed.option === 'string' && /[,;&]|\band\b/i.test(parsed.option))
+    ))
+  );
+
   let isMultiple = false;
-  if (candidateLetters.length > 1) {
-    if (isMultiWording || parsed.isMultiple === true) {
+  if (parsed.isMultiple === false || parsed.question_type === 'single') {
+    isMultiple = false;
+    if (candidateLetters.length > 1) {
+      candidateLetters = [candidateLetters[0]];
+    }
+  } else if (candidateLetters.length > 1) {
+    if (isMultiWording || parsedHasMultipleAnswers || options.length === 0) {
       isMultiple = true;
     } else {
       // Single answer question: keep only first option
       candidateLetters = [candidateLetters[0]];
     }
-  } else if (candidateLetters.length === 1 && isMultiWording && parsed.isMultiple === true) {
+  } else if (candidateLetters.length === 1 && (isMultiWording || parsedHasMultipleAnswers)) {
     isMultiple = true;
   }
 
@@ -565,14 +592,21 @@ async function callDirectGemini(payload, apiKey, modelName = 'gemini-2.5-flash')
   if (payload.question && payload.question.trim()) {
     promptText += `Question:\n${payload.question.trim()}\n\n`;
   }
+  const multiRegex = /\b(select all|choose all|which (?:of the following|of these)?\s+are|which are|all that apply|check all|select multiple|more than one|select each|mark all|select two|select three|select (?:2|3|4)|choose two|choose three|choose (?:2|3|4)|multiple correct|any of the following are|identify all)\b/i;
+  const isMultiWording = Boolean(payload.isMultiple) || multiRegex.test(payload.question || '');
+
   if (Array.isArray(payload.options) && payload.options.length > 0) {
     promptText += 'Options:\n';
     payload.options.forEach(opt => {
       promptText += `- [${opt.id}]: ${opt.text}\n`;
     });
-    promptText += '\nSelect the best option. Output JSON with "option": "<Option Letter>" and "answer": "<Option Text>".';
+    if (isMultiWording) {
+      promptText += '\nThis is a MULTIPLE-ANSWER question. Evaluate EVERY option independently. Output strictly valid JSON with "options": ["A", "B", ...], "option": "A, B, ...", and "answer".';
+    } else {
+      promptText += '\nSelect the best option. If multiple options are correct or the question asks for multiple characteristics ("which are", "select all"), identify ALL of them with "isMultiple": true and "options": ["A", "B", ...]. Output strictly valid JSON.';
+    }
   } else {
-    promptText += '\nOutput strictly valid JSON with "option" and "answer".';
+    promptText += '\nCarefully evaluate all options in the question or image. If multiple options are correct or it is a multiple-answer question ("which are", "select all"), return ALL correct options in "options": ["A", "B", ...] and set "isMultiple": true. If single choice, return one best option in "option": "<Letter>". Output strictly valid JSON.';
   }
 
   const parts = [{ text: promptText }];
@@ -679,14 +713,21 @@ async function callDirectOpenAI(payload, apiKey, modelName = 'gpt-4o-mini') {
   if (payload.question && payload.question.trim()) {
     userPrompt += `Question:\n${payload.question.trim()}\n\n`;
   }
+  const multiRegex = /\b(select all|choose all|which (?:of the following|of these)?\s+are|which are|all that apply|check all|select multiple|more than one|select each|mark all|select two|select three|select (?:2|3|4)|choose two|choose three|choose (?:2|3|4)|multiple correct|any of the following are|identify all)\b/i;
+  const isMultiWording = Boolean(payload.isMultiple) || multiRegex.test(payload.question || '');
+
   if (Array.isArray(payload.options) && payload.options.length > 0) {
     userPrompt += 'Options:\n';
     payload.options.forEach(opt => {
       userPrompt += `- [${opt.id}]: ${opt.text}\n`;
     });
-    userPrompt += '\nSelect the best option. Output JSON with "option": "<Option Letter>" and "answer": "<Option Text>".';
+    if (isMultiWording) {
+      userPrompt += '\nThis is a MULTIPLE-ANSWER question. Evaluate EVERY option independently. Output strictly valid JSON with "options": ["A", "B", ...], "option": "A, B, ...", and "answer".';
+    } else {
+      userPrompt += '\nSelect the best option. If multiple options are correct or the question asks for multiple characteristics ("which are", "select all"), identify ALL of them with "isMultiple": true and "options": ["A", "B", ...]. Output strictly valid JSON.';
+    }
   } else {
-    userPrompt += '\nOutput strictly valid JSON with "option" and "answer".';
+    userPrompt += '\nCarefully evaluate all options in the question or image. If multiple options are correct or it is a multiple-answer question ("which are", "select all"), return ALL correct options in "options": ["A", "B", ...] and set "isMultiple": true. If single choice, return one best option in "option": "<Letter>". Output strictly valid JSON.';
   }
 
   const userContent = [{ type: 'text', text: userPrompt }];
@@ -1019,6 +1060,65 @@ async function handleAnalyzeQuestion(payload) {
   }
 }
 
+/**
+ * Universal Cloud-to-Ollama Failover Engine
+ * When any configured cloud API-key provider fails (Gemini, OpenAI, Custom),
+ * automatically attempts local Ollama (http://127.0.0.1:11434).
+ */
+async function attemptOllamaFallback(payload, primaryProvider, primaryError, storage, currentController) {
+  // Prevent loops or redundant nested fallback
+  if (payload._isFallback) {
+    return { success: false, error: primaryError };
+  }
+
+  // Do not fall back if request was intentionally aborted / superseded
+  if (currentController && currentController.signal && currentController.signal.aborted) {
+    return { success: false, error: primaryError };
+  }
+
+  const primaryDisplayName = primaryProvider === 'openai' ? 'OpenAI' :
+    (primaryProvider === 'gemini' ? 'Gemini' : (storage.customProviders?.find(p => p.id === primaryProvider)?.name || 'Cloud provider'));
+
+  console.log(`[Universal Failover] Primary provider "${primaryDisplayName}" failed (${primaryError}). Falling back to local Ollama at http://127.0.0.1:11434...`);
+
+  const ollamaUrl = storage.ollamaUrl || 'http://127.0.0.1:11434';
+  const model = storage.ollamaSelectedModel;
+
+  const fallbackPayload = {
+    ...payload,
+    _isFallback: true
+  };
+
+  try {
+    const directData = await runDirectOllamaSolve(fallbackPayload, ollamaUrl, model);
+    await updateRealUsageStats({ provider: 'ollama', totalTokens: 100 });
+    return {
+      success: true,
+      data: {
+        ...directData,
+        isOllama: true,
+        provider: 'ollama',
+        source: 'ollama_fallback',
+        fallbackNotice: `${primaryDisplayName} unavailable — answered using Ollama 🦙`
+      }
+    };
+  } catch (ollamaErr) {
+    console.log('[Universal Failover Error] Fallback to Ollama also failed:', ollamaErr.message);
+    let cleanOllamaErr = ollamaErr.message || 'Local Ollama evaluation failed';
+    if (cleanOllamaErr.includes('Failed to fetch') || cleanOllamaErr.includes('ECONNREFUSED')) {
+      cleanOllamaErr = 'Ollama is not running. Please open the Ollama app on your computer.';
+    } else if (cleanOllamaErr.includes('403')) {
+      cleanOllamaErr = 'Ollama 403: Origin blocked. Please reload extension at chrome://extensions';
+    } else if (cleanOllamaErr.includes('AbortError') || cleanOllamaErr.includes('timed out')) {
+      cleanOllamaErr = 'Ollama timed out. The local model is taking too long to compute.';
+    }
+    return {
+      success: false,
+      error: `${primaryDisplayName} unavailable (${primaryError}). Fallback to Ollama failed: ${cleanOllamaErr}`
+    };
+  }
+}
+
 async function executeProviderRouting(payload, provider, rawProvider, targetModel, storage, currentController) {
 
   console.log('[Moodle AI Diagnostic 10/14] Provider selected:', { rawProvider, routedProvider: provider });
@@ -1068,8 +1168,10 @@ async function executeProviderRouting(payload, provider, rawProvider, targetMode
         provider: 'gemini',
         sanitizedError: err.message
       });
-      // STRICT ISOLATION: Never fall back to Ollama or OpenAI
-      return { success: false, error: err.message };
+      if (err.name === 'AbortError' || (currentController && currentController.signal && currentController.signal.aborted)) {
+        return { success: false, error: err.message };
+      }
+      return await attemptOllamaFallback(payload, 'gemini', err.message, storage, currentController);
     }
   }
 
@@ -1118,8 +1220,10 @@ async function executeProviderRouting(payload, provider, rawProvider, targetMode
         provider: 'openai',
         sanitizedError: err.message
       });
-      // STRICT ISOLATION: Never fall back to Ollama or Gemini
-      return { success: false, error: err.message };
+      if (err.name === 'AbortError' || (currentController && currentController.signal && currentController.signal.aborted)) {
+        return { success: false, error: err.message };
+      }
+      return await attemptOllamaFallback(payload, 'openai', err.message, storage, currentController);
     }
   }
 
@@ -1196,7 +1300,14 @@ async function executeProviderRouting(payload, provider, rawProvider, targetMode
       const data = await res.json();
       return { success: true, data: { ...data, isOllama: false, provider: rawProvider } };
     } catch (err) {
-      return { success: false, error: err.message };
+      console.log('[AI Provider Routing Error]', {
+        provider: rawProvider,
+        sanitizedError: err.message
+      });
+      if (err.name === 'AbortError' || (currentController && currentController.signal && currentController.signal.aborted)) {
+        return { success: false, error: err.message };
+      }
+      return await attemptOllamaFallback(payload, rawProvider, err.message, storage, currentController);
     }
   }
 
@@ -1410,10 +1521,10 @@ async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434
     if (isMultiWording) {
       prompt += `\nThis is a MULTIPLE-ANSWER question. Evaluate EVERY option independently. Output strictly valid JSON with "options": ["A", "B", ...], "option": "A, B, ...", and "answer".`;
     } else {
-      prompt += `\nSelect the best option. Output JSON with "option": "<Option Letter>" and "answer": "<Option Text>".`;
+      prompt += `\nSelect the best option. If multiple options are correct or the question asks for multiple characteristics ("which are", "select all"), identify ALL of them with "isMultiple": true and "options": ["A", "B", ...]. Output strictly valid JSON.`;
     }
   } else {
-    prompt += `\nOutput strictly valid JSON with "option" and "answer".`;
+    prompt += `\nCarefully evaluate all options in the question or image. If multiple options are correct or it is a multiple-answer question ("which are", "select all"), return ALL correct options in "options": ["A", "B", ...] and set "isMultiple": true. If single choice, return one best option in "option": "<Letter>". Output strictly valid JSON.`;
   }
 
   const system = SYSTEM_PROMPT;
@@ -1471,11 +1582,12 @@ async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434
             const chunk = JSON.parse(trimmed);
             if (chunk.response) {
               rawOutputText += chunk.response;
-              // Early detection: parse as soon as closing brace is received with option and answer
-              if (!earlyFound && rawOutputText.includes('}') && (rawOutputText.includes('"option"') || rawOutputText.includes('"choice"')) && rawOutputText.includes('"answer"')) {
+              // Early completion only for pure text single-answer questions once JSON is fully resolved
+              if (!earlyFound && rawImages.length === 0 && rawOutputText.includes('}') && (rawOutputText.includes('"option"') || rawOutputText.includes('"choice"')) && rawOutputText.includes('"answer"')) {
                 const testParsed = extractJSON(rawOutputText);
                 if (testParsed && (testParsed.option || testParsed.choice) && (testParsed.answer || testParsed.result)) {
-                  if (!isMultiWording || rawOutputText.includes('"reason"') || rawOutputText.includes('"status"')) {
+                  const testIsMulti = Boolean(isMultiWording || testParsed.isMultiple || (Array.isArray(testParsed.options) && testParsed.options.length > 1));
+                  if (!testIsMulti && (rawOutputText.includes('"reason"') || rawOutputText.includes('"status"'))) {
                     earlyFound = true;
                     try { reader.cancel(); } catch (_) {}
                     break;

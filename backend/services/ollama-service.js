@@ -343,43 +343,132 @@ export async function getOllamaDiagnostics(options = {}) {
 }
 
 /**
- * Build subject-aware system prompt ensuring local Ollama output is deterministic,
- * accurate, and never unnecessarily uncertain.
+ * Classify question structure specifically for Ollama inference:
+ * Returns: 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'OPEN_ENDED' | 'UNKNOWN'
  */
-function buildSystemPrompt(domain) {
+export function classifyOllamaQuestion(questionText = '', options = [], questionType = '', hasCheckboxes = false) {
+  if (hasCheckboxes) return 'MULTIPLE_CHOICE';
+
+  const text = String(questionText || '').trim();
+
+  // Strong explicit multiple-answer indicators
+  const multiRegex = /\b(select all|choose all|all that apply|check all|select multiple|more than one|select each|mark all|multiple correct|any of the following are|identify all|select two|select three|select (?:2|3|4)|choose two|choose three|choose (?:2|3|4)|which (?:of the following|of these)?\s+(?:are|statements are|characteristics are|options are|features are|principles are))\b/i;
+  const whichAreRegex = /\bwhich\s+(?:of the following\s+|of these\s+)?are\b/i;
+  const singularRegex = /\b(which (?:of the following|of these)?\s+(?:is|was)|which is|select (?:one|the single|the best)|choose (?:one|the single|the best))\b/i;
+
+  if (multiRegex.test(text) || whichAreRegex.test(text) || questionType === 'multiple_choice') {
+    if (!singularRegex.test(text) || multiRegex.test(text) || whichAreRegex.test(text)) {
+      return 'MULTIPLE_CHOICE';
+    }
+  }
+
+  if (Array.isArray(options) && options.length >= 2) {
+    return 'SINGLE_CHOICE';
+  }
+
+  if (text.length > 0 && (!options || options.length < 2)) {
+    return 'OPEN_ENDED';
+  }
+
+  return 'UNKNOWN';
+}
+
+/**
+ * Build subject-aware system prompt ensuring local Ollama output is deterministic,
+ * accurate, and correctly formatted for single vs multiple answers.
+ */
+function buildSystemPrompt(domain, classifiedType = 'SINGLE_CHOICE') {
   const domainGuidance = getDomainGuidelines(domain);
 
-  return `You are an expert academic tutor and AI inference engine solving quiz questions.
-Output strictly valid JSON with keys: "option", "answer", "reason", "confidence", "status".
+  if (classifiedType === 'MULTIPLE_CHOICE') {
+    return `You are an expert academic tutor and AI inference engine solving quiz questions.
+QUESTION CLASSIFICATION: MULTIPLE_CHOICE (Multiple correct answers possible).
+Output strictly valid JSON with keys: "question_type", "option", "options", "answer", "reason", "confidence", "status", "isMultiple".
 
-STRICT RULES:
-1. Always determine and select the single best, most accurate answer from the question or available options.
-2. NEVER output "I am not sure", "uncertain", or generic hesitation. Answer directly with academic precision.
-3. For multiple-choice questions (MCQs):
-   - Set "option" to the exact chosen option letter (e.g. "A", "B", "C", "D").
-   - Set "answer" to the exact text of that selected option.
-4. For numerical / short answer questions:
-   - Set "option" to "".
-   - Set "answer" to the exact calculated number or term with correct units.
-5. In "reason", provide a concise 1-sentence verification explaining why this answer is correct.
-6. Set "status" to "success" and "confidence" to 0.95.
+STRICT RULES FOR MULTIPLE-ANSWER QUESTIONS:
+1. This question may have MORE THAN ONE correct option. Evaluate EVERY available option independently (A, B, C, D...).
+2. Identify ALL correct options. NEVER stop after finding the first correct answer.
+3. In "options", return an array of all correct option letters: ["A", "B", "D"].
+4. In "option", return comma-separated correct option letters: "A, B, D".
+5. In "answer", return the full text of each correct option formatted on newlines: "A — text\nB — text\nD — text".
+6. In "reason", provide a concise explanation for EACH correct option.
+7. Set "isMultiple": true, "question_type": "multiple", "confidence": 0.95, and "status": "success".
 
 ${domainGuidance}
 
 Response format must be valid JSON:
 {
+  "question_type": "multiple",
+  "option": "A, B, D",
+  "options": ["A", "B", "D"],
+  "answer": "A — Option A text\\nB — Option B text\\nD — Option D text",
+  "reason": "Option evaluations:\\n- A: [why correct]\\n- B: [why correct]\\n- D: [why correct]",
+  "confidence": 0.95,
+  "status": "success",
+  "isMultiple": true
+}`;
+  }
+
+  if (classifiedType === 'OPEN_ENDED') {
+    return `You are an expert academic tutor and AI inference engine solving quiz questions.
+QUESTION CLASSIFICATION: OPEN_ENDED (Numerical, short answer, or coding).
+Output strictly valid JSON with keys: "question_type", "option", "options", "answer", "reason", "confidence", "status", "isMultiple".
+
+STRICT RULES:
+1. Provide the exact calculated number, expression, or concise term.
+2. Set "option": "", "options": [], and "isMultiple": false.
+3. In "reason", provide a concise step-by-step verification.
+4. Set "status": "success" and "confidence": 0.95.
+
+${domainGuidance}
+
+Response format must be valid JSON:
+{
+  "question_type": "open_ended",
+  "option": "",
+  "options": [],
+  "answer": "Calculated value or term",
+  "reason": "Brief verification",
+  "confidence": 0.95,
+  "status": "success",
+  "isMultiple": false
+}`;
+  }
+
+  return `You are an expert academic tutor and AI inference engine solving quiz questions.
+QUESTION CLASSIFICATION: SINGLE_CHOICE (Exactly one best answer).
+Output strictly valid JSON with keys: "question_type", "option", "options", "answer", "reason", "confidence", "status", "isMultiple".
+
+STRICT RULES:
+1. Evaluate all options and select the single best, most accurate option from the available choices.
+2. NEVER output "I am not sure", "uncertain", or generic hesitation. Answer directly with academic precision.
+3. For single-choice MCQs:
+   - Set "option" to the chosen option letter (e.g. "A").
+   - Set "options" to ["<Letter>"].
+   - Set "answer" to the exact text of that selected option.
+   - Set "isMultiple": false.
+4. In "reason", provide a concise 1-sentence verification explaining why this answer is correct.
+5. Set "status" to "success" and "confidence": 0.95.
+
+${domainGuidance}
+
+Response format must be valid JSON:
+{
+  "question_type": "single",
   "option": "A",
+  "options": ["A"],
   "answer": "Option text",
   "reason": "Brief verification",
   "confidence": 0.95,
-  "status": "success"
+  "status": "success",
+  "isMultiple": false
 }`;
 }
 
 /**
  * Build clean, subject-focused prompt string for Ollama
  */
-function buildOllamaPrompt(payload, domain) {
+function buildOllamaPrompt(payload, domain, classifiedType = 'SINGLE_CHOICE') {
   const { question, options, questionType, hasImage } = payload;
   let p = '';
 
@@ -388,11 +477,11 @@ function buildOllamaPrompt(payload, domain) {
     p += `Instructions for image:
 1. Carefully read and OCR all question text, mathematical formulas, equations, and code inside the image.
 2. Examine all answer options (A, B, C, D...) visible in the image or listed below.
-3. Solve the question accurately and choose the single correct option.\n\n`;
+3. Solve the question accurately. If multiple options are correct or it is a multiple-answer question ("which are", "select all"), identify ALL correct options.\n\n`;
   }
 
   p += `Academic Domain: ${domain}\n`;
-  p += `Question Type: ${questionType || 'single_choice'}\n\n`;
+  p += `Question Type: ${classifiedType}\n\n`;
 
   if (question && question.trim()) {
     p += `Question:\n${question.trim()}\n\n`;
@@ -400,131 +489,188 @@ function buildOllamaPrompt(payload, domain) {
     p += `Please examine the attached image containing the question and choices.\n\n`;
   }
 
+  const isMulti = classifiedType === 'MULTIPLE_CHOICE';
+
   if (options && options.length > 0) {
     p += `Available Options:\n`;
     options.forEach((opt) => {
       p += `- [${opt.id}]: ${opt.text}\n`;
     });
-    p += `\nSelect the best option from above. Output JSON with "option": "<ID>" and "answer": "<text>".`;
+    if (isMulti) {
+      p += `\nThis is a MULTIPLE-ANSWER question. Evaluate EVERY option independently. Output JSON with "options": ["A", "B", ...], "option": "A, B, ...", "isMultiple": true, and "answer".`;
+    } else {
+      p += `\nSelect the best option. If multiple options are correct or the question asks for multiple characteristics ("which are", "select all"), identify ALL of them with "option": "A, B, ..." and "options": ["A", "B", ...]. Output strictly valid JSON.`;
+    }
   } else {
-    p += `\nOutput strictly valid JSON with "option" and "answer".`;
+    p += `\nCarefully evaluate all options in the question or image. If multiple options are correct or it is a multiple-answer question ("which are", "select all"), return ALL correct options in "options": ["A", "B", ...] and "option": "A, B, ...". Output strictly valid JSON.`;
   }
 
   return p;
 }
 
 /**
- * Reconcile and verify model output against provided options to eliminate uncertainty
- * and ensure 100% adherence to quiz schema.
+ * Reconcile and verify model output against provided options to eliminate uncertainty,
+ * correctly preserve multiple answers (A, B, D), and adhere to quiz schema.
  */
-function verifyAndNormalizeAnswer(parsed, payload, domain) {
-  let option = String(parsed.option || parsed.selected_option || parsed.choice || '').trim();
-  let answer = String(parsed.answer || parsed.answerText || parsed.correct_answer || parsed.result || '').trim();
+export function verifyAndNormalizeAnswer(parsed, payload, domain) {
   const options = Array.isArray(payload.options) ? payload.options : [];
+  const questionText = String(payload.question || '').trim();
+  const classifiedType = classifyOllamaQuestion(questionText, options, payload.questionType, payload.hasCheckboxes);
 
-  // Normalize option if formatted like "B) Text"
-  if (option) {
-    const optMatch = option.match(/^([A-Za-z0-9]+)[\.\:\)\-]?/);
-    if (optMatch) {
-      option = optMatch[1].toUpperCase();
+  // 1. Extract all candidate option letters
+  const candidateLetters = [];
+  const seenLetters = new Set();
+  function addLetter(raw) {
+    if (!raw) return;
+    const str = String(raw).trim();
+    const m = str.match(/^([A-Za-z0-9]+)[\.\:\)\-]?/);
+    if (m) {
+      let up = m[1].toUpperCase();
+      if (/^[1-9]$/.test(up)) {
+        up = String.fromCharCode(64 + parseInt(up, 10)); // 1->A, 2->B, 3->C, 4->D
+      }
+      if (up.length <= 2 && up !== 'UNCERTAIN' && !seenLetters.has(up)) {
+        seenLetters.add(up);
+        candidateLetters.push(up);
+      }
     }
   }
 
-  // Purge any uncertainty output from small local models
-  if (option.toUpperCase() === 'UNCERTAIN') {
-    option = '';
-  }
-  if (
-    answer.toLowerCase().includes('uncertain') ||
-    answer.toLowerCase().includes('needs verification') ||
-    answer.toLowerCase().includes('cannot determine') ||
-    answer.toLowerCase().includes('unable to')
-  ) {
-    answer = '';
+  // 1. Direct chosen option takes precedence
+  const rawOptionStr = String(parsed.option || parsed.selected_option || parsed.choice || '').trim();
+  if (rawOptionStr && rawOptionStr.toUpperCase() !== 'UNCERTAIN') {
+    const parts = rawOptionStr.split(/[,;&]|\band\b/i);
+    parts.forEach(addLetter);
   }
 
-  // If option is missing but answer starts with e.g. "B) QuickSort"
-  if (!option && answer) {
-    const match = answer.match(/^([A-Za-z])[\.\:\)\-]\s*(.*)$/);
-    if (match) {
-      option = match[1].toUpperCase();
-      answer = match[2].trim();
+  // 2. Options array only added if multiple-choice or direct option was empty
+  const isMultiContext = Boolean(classifiedType === 'MULTIPLE_CHOICE' || parsed.question_type === 'multiple' || parsed.isMultiple === true);
+  if (Array.isArray(parsed.options)) {
+    if (isMultiContext || candidateLetters.length === 0) {
+      parsed.options.forEach(addLetter);
     }
   }
+  if (Array.isArray(parsed.optionIds)) {
+    if (isMultiContext || candidateLetters.length === 0) {
+      parsed.optionIds.forEach(addLetter);
+    }
+  }
+  if (Array.isArray(parsed.answer) && (isMultiContext || candidateLetters.length === 0)) {
+    parsed.answer.forEach(addLetter);
+  }
 
-  // If option is still empty, scan explanation/reason for explicit option references (e.g. "Option C is correct")
-  if (!option && (parsed.reason || parsed.explanation)) {
+  if (candidateLetters.length === 0 && (parsed.reason || parsed.explanation)) {
     const combinedReason = `${parsed.reason || ''} ${parsed.explanation || ''}`;
-    const reasonOptMatch = combinedReason.match(/\b(?:option|choice|answer)\s+([A-D])\b/i);
-    if (reasonOptMatch) {
-      option = reasonOptMatch[1].toUpperCase();
+    const matches = combinedReason.matchAll(/\b(?:option|choice|answer)\s+([A-D])\b/gi);
+    for (const m of matches) {
+      addLetter(m[1]);
     }
   }
 
-  // If option is provided and options list exists: verify and fill answer text
-  if (options.length > 0) {
-    const optUpper = String(option || '').trim().toUpperCase();
-    const ansLower = String(answer || '').trim().toLowerCase();
+  // 2. Determine whether this is a multiple-answer question
+  let isMultiple = false;
+  if (isMultiContext) {
+    isMultiple = true;
+  } else if (candidateLetters.length > 1) {
+    if (classifiedType !== 'SINGLE_CHOICE' || options.length === 0) {
+      isMultiple = true;
+    } else {
+      candidateLetters.splice(1);
+    }
+  }
 
-    let match = null;
-    if (optUpper) {
-      match = options.find(o => String(o.id).toUpperCase() === optUpper);
+  // 3. Match against options
+  const matchedOptions = [];
+  if (options.length > 0 && candidateLetters.length > 0) {
+    for (const letter of candidateLetters) {
+      let match = options.find(o => String(o.id).toUpperCase() === letter);
       if (!match) {
-        const letterIdx = optUpper.charCodeAt(0) - 65;
-        if (letterIdx >= 0 && letterIdx < options.length) {
-          match = options[letterIdx];
-        }
+        const letterIdx = letter.charCodeAt(0) - 65;
+        if (letterIdx >= 0 && letterIdx < options.length) match = options[letterIdx];
       }
       if (!match) {
         match = options.find(o => {
           const m = String(o.text || '').match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*/);
-          return m && (m[1] || m[2] || m[3]).toUpperCase() === optUpper;
+          return m && (m[1] || m[2] || m[3]).toUpperCase() === letter;
         });
       }
-    }
 
-    if (!match && ansLower) {
-      match = options.find(o => {
-        const raw = String(o.text || '').toLowerCase().trim();
-        const stripped = raw.replace(/^[a-z0-9]+[\.\:\)\-]\s*/i, '').trim();
-        return raw === ansLower || stripped === ansLower ||
-               (ansLower.length > 3 && (raw.includes(ansLower) || ansLower.includes(raw) || stripped.includes(ansLower) || ansLower.includes(stripped)));
-      });
-    }
-
-    if (!match) match = options[0];
-
-    if (match) {
-      const mMatch = String(match.text || '').match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
-      const matchIdx = options.indexOf(match);
-      if (mMatch) {
-        option = (mMatch[1] || mMatch[2] || mMatch[3]).toUpperCase();
-        answer = mMatch[4].trim() || match.text;
+      if (match) {
+        let cleanText = String(match.text || '').trim();
+        const mMatch = cleanText.match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
+        if (mMatch && mMatch[4]) cleanText = mMatch[4].trim();
+        matchedOptions.push({ id: letter, text: cleanText });
       } else {
-        option = String(match.id).length <= 2 ? String(match.id).toUpperCase() : String.fromCharCode(65 + Math.max(0, matchIdx));
-        answer = match.text;
+        matchedOptions.push({ id: letter, text: `Option ${letter}` });
       }
     }
   }
 
-  // Clean fallback for answer text if still empty
-  if (!answer) {
-    answer = option ? `Option ${option}` : 'Solution evaluated successfully';
+  // Text matching fallback if candidateLetters was empty but raw answer has text
+  let rawAnswer = String(parsed.answer || parsed.answerText || parsed.correct_answer || parsed.result || '').trim();
+  if (
+    rawAnswer.toLowerCase().includes('uncertain') ||
+    rawAnswer.toLowerCase().includes('needs verification') ||
+    rawAnswer.toLowerCase().includes('cannot determine') ||
+    rawAnswer.toLowerCase().includes('unable to')
+  ) {
+    rawAnswer = '';
   }
 
-  const confidence = typeof parsed.confidence === 'number'
-    ? Math.max(0.70, Math.min(1.0, parsed.confidence))
-    : 0.95;
+  if (matchedOptions.length === 0 && options.length > 0 && rawAnswer && typeof parsed.answer === 'string') {
+    const ansLower = rawAnswer.toLowerCase();
+    const textMatch = options.find(o => {
+      const raw = String(o.text || '').toLowerCase().trim();
+      const stripped = raw.replace(/^[a-z0-9]+[\.\:\)\-]\s*/i, '').trim();
+      return raw === ansLower || stripped === ansLower ||
+             (ansLower.length > 3 && (raw.includes(ansLower) || ansLower.includes(raw) || stripped.includes(ansLower) || ansLower.includes(stripped)));
+    });
+    if (textMatch) {
+      const mIdx = options.indexOf(textMatch);
+      const letter = String(textMatch.id || String.fromCharCode(65 + mIdx)).toUpperCase();
+      let cleanText = String(textMatch.text || '').trim();
+      const mMatch = cleanText.match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
+      if (mMatch && mMatch[4]) cleanText = mMatch[4].trim();
+      matchedOptions.push({ id: letter, text: cleanText });
+    }
+  }
+
+  let finalOption = '';
+  let finalOptionIds = [];
+  let finalAnswer = '';
+
+  if (matchedOptions.length > 0) {
+    finalOptionIds = matchedOptions.map(m => m.id);
+    finalOption = finalOptionIds.join(', ');
+    if (isMultiple) {
+      finalAnswer = matchedOptions.map(m => `${m.id} — ${m.text}`).join('\n');
+    } else {
+      finalAnswer = matchedOptions[0].text;
+    }
+  } else {
+    finalOption = candidateLetters.join(', ');
+    finalOptionIds = candidateLetters;
+    finalAnswer = rawAnswer || (finalOption ? `Option ${finalOption}` : 'Solution evaluated successfully');
+  }
+
+  const rawReason = parsed.reason || parsed.explanation || `Selected ${finalOption} based on ${domain || 'academic'} analysis.`;
+  let finalExplanation = rawReason;
+  if (isMultiple) {
+    finalExplanation = `MULTIPLE ANSWER\n\n${finalAnswer}\n\nExplanation:\n${rawReason}`;
+  }
 
   return {
-    answer,
-    answerText: answer,
-    option,
-    optionIds: option ? [option] : [],
+    question_type: isMultiple ? 'multiple' : (options.length === 0 ? 'open_ended' : 'single'),
+    option: finalOption,
+    options: finalOptionIds,
+    optionIds: finalOptionIds,
+    answer: finalAnswer,
+    answerText: finalAnswer,
+    isMultiple,
     status: 'success',
-    explanation: parsed.reason || parsed.explanation || `Selected option ${option} based on ${domain} analysis.`,
-    reason: parsed.reason || parsed.explanation || `Selected option ${option} based on ${domain} analysis.`,
-    confidence,
+    explanation: finalExplanation,
+    reason: rawReason,
+    confidence: typeof parsed.confidence === 'number' ? Math.max(0.70, Math.min(1.0, parsed.confidence)) : 0.95,
     needsMoreContext: false,
     domain
   };
@@ -597,8 +743,9 @@ export async function callOllama(payload, options = {}) {
 
   const hasImage = rawImages.length > 0;
   const domain = detectSubject(payload.question || '', payload.options || []);
-  const prompt = buildOllamaPrompt({ ...payload, hasImage }, domain);
-  const system = buildSystemPrompt(domain);
+  const classifiedType = classifyOllamaQuestion(payload.question, payload.options, payload.questionType, payload.hasCheckboxes);
+  const prompt = buildOllamaPrompt({ ...payload, hasImage }, domain, classifiedType);
+  const system = buildSystemPrompt(domain, classifiedType);
 
   const estimatedInputTokens = Math.ceil((prompt.length + system.length) / 3);
   const dynamicCtx = rawImages.length > 0 ? 8192 : Math.max(2048, Math.min(8192, estimatedInputTokens + 600));
@@ -657,14 +804,46 @@ export async function callOllama(payload, options = {}) {
   }
 
   const resJson = await rawRes.json();
-  const rawOutputText = resJson.response;
+  let rawOutputText = resJson.response;
 
   if (!rawOutputText || typeof rawOutputText !== 'string') {
     throw new Error(`Ollama model "${modelIdentifier}" returned an empty response.`);
   }
 
-  // 4. Parse JSON using resilient parser and verify against question context
-  const parsed = extractAndParseJSON(rawOutputText);
+  // 4. Parse JSON with resilient parser and allow at most ONE controlled correction attempt
+  let parsed = null;
+  try {
+    parsed = extractAndParseJSON(rawOutputText);
+  } catch (_) {}
+
+  if (!parsed || typeof parsed !== 'object' || (!parsed.option && !parsed.options && !parsed.answer && !parsed.result)) {
+    try {
+      const repairRes = await fetch(`${baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: modelIdentifier,
+          prompt: `The previous text was supposed to be a valid JSON quiz answer with keys "option", "options", "answer", "reason". Correct it into strictly valid JSON:\n\n${rawOutputText.slice(0, 600)}`,
+          stream: false,
+          format: 'json',
+          keep_alive: '30m',
+          options: { temperature: 0.0, num_predict: 250 }
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (repairRes.ok) {
+        const repairJson = await repairRes.json();
+        if (repairJson.response) {
+          parsed = extractAndParseJSON(repairJson.response);
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error(`Ollama model "${modelIdentifier}" returned an incomplete or malformed response.`);
+  }
+
   const normalized = verifyAndNormalizeAnswer(parsed, payload, domain);
 
   return {
