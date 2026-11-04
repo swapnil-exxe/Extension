@@ -147,8 +147,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       newProviderKey.value = '';
       addProviderForm.style.display = 'none';
 
-      renderCustomProviders();
-      refreshAuthStatus(effectiveBackendUrl);
+      renderCustomProviders(newId);
+      highlightActiveProvider(newId);
     });
   }
 
@@ -237,9 +237,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           await chrome.storage.local.set({ customProviders });
           if (currentActive === p.id) {
             await chrome.storage.local.set({ activeProvider: 'gemini' });
+            highlightActiveProvider('gemini');
           }
           renderCustomProviders();
-          refreshAuthStatus(effectiveBackendUrl);
         }
       });
 
@@ -321,9 +321,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   function highlightActiveProvider(val) {
     const allCards = document.querySelectorAll('.provider-card');
     allCards.forEach(c => c.classList.remove('active-card'));
-    const targetCard = document.getElementById(`card-${val}`);
+    let targetCard = document.getElementById(`card-${val}`);
+    if (!targetCard) {
+      if (val === 'gemini' || (val && val.startsWith('gemini'))) targetCard = document.getElementById('card-gemini_1');
+      if (val === 'openai' || val === 'chatgpt') targetCard = document.getElementById('card-chatgpt');
+    }
     if (targetCard) targetCard.classList.add('active-card');
-    const targetRadio = document.querySelector(`input[name="active-provider"][value="${val}"]`);
+
+    let targetRadio = document.querySelector(`input[name="active-provider"][value="${val}"]`);
+    if (!targetRadio) {
+      if (val === 'gemini' || (val && val.startsWith('gemini'))) targetRadio = document.querySelector('input[name="active-provider"][value="gemini_1"]');
+      if (val === 'openai' || val === 'chatgpt') targetRadio = document.querySelector('input[name="active-provider"][value="chatgpt"]');
+    }
     if (targetRadio) targetRadio.checked = true;
     updateFooterProviderStatus(val);
   }
@@ -332,12 +341,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.addEventListener('change', async (e) => {
     if (e.target && e.target.name === 'active-provider' && e.target.checked) {
       const selected = e.target.value;
-      await chrome.storage.local.set({ activeProvider: selected });
+      const normalizedProvider = selected === 'chatgpt' ? 'openai' : (selected.startsWith('gemini') ? 'gemini' : selected);
+      await chrome.storage.local.set({ activeProvider: normalizedProvider });
       highlightActiveProvider(selected);
 
       // Notify backend server of the switch only if not offline Ollama
-      if (selected !== 'ollama') {
-        const backendProvider = selected.startsWith('gemini') ? 'gemini' : selected;
+      if (normalizedProvider !== 'ollama') {
+        const backendProvider = normalizedProvider.startsWith('gemini') ? 'gemini' : (normalizedProvider === 'openai' ? 'chatgpt' : normalizedProvider);
         chrome.runtime.sendMessage({
           action: 'AUTH_SELECT_PROVIDER',
           provider: backendProvider,

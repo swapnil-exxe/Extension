@@ -60,6 +60,10 @@ export function isVisionSupported(provider = '', model = '') {
   if (norm === 'ollama') {
     return detectModelCapability({ name: model }) === 'Vision';
   }
+  if (norm === 'custom') {
+    const m = (model || '').toLowerCase();
+    return m.includes('vision') || m.includes('gpt-4') || m.includes('gemini') || m.includes('vl') || m.includes('llava');
+  }
   if (norm === 'mock') return true;
   return false;
 }
@@ -320,7 +324,7 @@ async function callGemini(payload, config = {}) {
     ],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 1024,
+      maxOutputTokens: 350,
       responseMimeType: 'application/json'
     }
   };
@@ -358,10 +362,18 @@ async function callGemini(payload, config = {}) {
           headers['x-goog-api-key'] = currentKey;
         }
 
+        const payloadBody = {
+          ...requestBody,
+          generationConfig: {
+            ...requestBody.generationConfig,
+            ...(model && model.includes('2.5') ? { thinkingConfig: { thinkingBudget: 0 } } : {})
+          }
+        };
+
         const response = await fetch(url, {
           method: 'POST',
           headers,
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify(payloadBody),
           signal: AbortSignal.timeout(config.timeoutMs || 14000)
         });
 
@@ -723,10 +735,7 @@ export async function getLLMAnswer(payload, options = {}) {
       try {
         rawResult = await callOpenAI(payload, options);
       } catch (openAiErr) {
-        if (connectedAccounts.gemini.status === 'connected' || process.env.GEMINI_API_KEY) {
-          console.warn(`[Failover] OpenAI error (${openAiErr.message}). Automatically falling back to Google Gemini.`);
-          rawResult = await callGemini(payload, options);
-        } else if (process.env.NODE_ENV === 'test') {
+        if (process.env.NODE_ENV === 'test' && !options.apiKey && !process.env.OPENAI_API_KEY) {
           rawResult = callMock(payload);
         } else {
           throw openAiErr;

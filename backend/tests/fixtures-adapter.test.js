@@ -1571,6 +1571,70 @@ test('Regression Test: Notification host attaches to documentElement without all
   assert.ok(!styleEl.textContent.includes('all: initial !important'), 'Shadow style must not contain all: initial !important');
 });
 
+test('Answer Popup Appearance: Applies custom background RGBA and text color', () => {
+  const dom = setupDOM('<div></div>');
+  const { document } = dom.window;
+  const QuickNotification = dom.window.MoodleQuickNotification;
+  
+  const notif = new QuickNotification();
+  notif.appearance = {
+    textColor: '#FF0000',
+    backgroundColor: '#000000',
+    backgroundOpacity: 50
+  };
+
+  notif.showAnswer({ option: 'C', answer: '42' });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  assert.ok(host, 'Host element must exist');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.ok(box, 'Box element must exist');
+  
+  assert.equal(box.style.background, 'rgba(0, 0, 0, 0.5)');
+
+  const answerSpan = box.querySelector('.answer-text');
+  assert.ok(answerSpan, 'Answer text span must exist');
+  assert.equal(answerSpan.style.color, 'rgb(255, 0, 0)');
+  assert.equal(answerSpan.textContent, 'C — 42');
+});
+
+test('Answer Popup Appearance: Default appearance has white background, black text, and borderless style', () => {
+  const dom = setupDOM('<div></div>');
+  const { document } = dom.window;
+  const QuickNotification = dom.window.MoodleQuickNotification;
+  
+  const notif = new QuickNotification();
+  notif.showAnswer({ option: 'A', answer: 'True' });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  
+  assert.ok(box.style.background.includes('255, 255, 255'), 'Background should be white');
+
+  const answerSpan = box.querySelector('.answer-text');
+  assert.equal(answerSpan.style.color, 'rgb(0, 0, 0)');
+  assert.equal(box.style.borderStyle, 'none', 'Border style must be none by default');
+  assert.equal(box.style.boxShadow, 'none', 'Box shadow must be none when borderless');
+});
+
+test('Answer Popup Appearance: Border can be enabled when showBorder is true', () => {
+  const dom = setupDOM('<div></div>');
+  const { document } = dom.window;
+  const QuickNotification = dom.window.MoodleQuickNotification;
+  
+  const notif = new QuickNotification();
+  notif.appearance = {
+    showBorder: true
+  };
+  notif.showAnswer({ option: 'B', answer: '42' });
+
+  const host = document.getElementById('moodle-quick-notify-host');
+  const box = host.shadowRoot.getElementById('notify-box');
+  assert.equal(box.style.borderStyle, 'solid', 'Border style should be solid when showBorder is true');
+  assert.ok(box.style.border.includes('1px solid'), 'Border should be present when showBorder is true');
+  assert.ok(box.style.boxShadow.includes('rgba(0, 0, 0, 0.12)'), 'Box shadow should be present when showBorder is true');
+});
+
 
 
 

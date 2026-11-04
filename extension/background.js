@@ -168,24 +168,35 @@ chrome.commands.onCommand.addListener(async (command) => {
 // Handle messages from content script or popup/options UI
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'CAPTURE_VISIBLE_TAB') {
-    const targetWinId = sender.tab ? sender.tab.windowId : undefined;
-    chrome.tabs.captureVisibleTab(targetWinId, { format: 'png' }, (dataUrl) => {
-      if (!chrome.runtime.lastError && dataUrl) {
-        sendResponse({ success: true, dataUrl });
-      } else {
-        // Fallback: try capturing with last focused window
-        chrome.windows.getLastFocused({ populate: false }, (win) => {
-          const fallbackWinId = win ? win.id : undefined;
-          chrome.tabs.captureVisibleTab(fallbackWinId, { format: 'png' }, (fallbackUrl) => {
-            if (chrome.runtime.lastError || !fallbackUrl) {
-              sendResponse({ success: false, error: chrome.runtime.lastError?.message || 'Capture failed' });
-            } else {
-              sendResponse({ success: true, dataUrl: fallbackUrl });
-            }
-          });
-        });
-      }
-    });
+    try {
+      const targetWinId = sender.tab ? sender.tab.windowId : undefined;
+      chrome.tabs.captureVisibleTab(targetWinId, { format: 'jpeg', quality: 92 }, (dataUrl) => {
+        if (!chrome.runtime.lastError && dataUrl) {
+          sendResponse({ success: true, dataUrl });
+        } else {
+          try {
+            chrome.windows.getLastFocused({ populate: false }, (win) => {
+              if (chrome.runtime.lastError || !win) {
+                sendResponse({ success: false, error: 'Cannot find focused window' });
+                return;
+              }
+              const fallbackWinId = win ? win.id : undefined;
+              chrome.tabs.captureVisibleTab(fallbackWinId, { format: 'jpeg', quality: 92 }, (fallbackUrl) => {
+                if (chrome.runtime.lastError || !fallbackUrl) {
+                  sendResponse({ success: false, error: chrome.runtime.lastError?.message || 'Capture failed' });
+                } else {
+                  sendResponse({ success: true, dataUrl: fallbackUrl });
+                }
+              });
+            });
+          } catch (winErr) {
+            sendResponse({ success: false, error: winErr.message || 'Window query failed' });
+          }
+        }
+      });
+    } catch (err) {
+      sendResponse({ success: false, error: err.message || 'Capture visible tab error' });
+    }
     return true; // Keep port open
   }
 
@@ -307,6 +318,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
+
+  if (message.action === 'TEST_GEMINI_CONNECTION') {
+    testGeminiConnection(message.apiKey, message.model)
+      .then(sendResponse)
+      .catch((err) => {
+        sendResponse({ ok: false, error: err.message || 'Connection test failed' });
+      });
+    return true;
+  }
+
+  if (message.action === 'TEST_OPENAI_CONNECTION') {
+    testOpenAIConnection(message.apiKey, message.model)
+      .then(sendResponse)
+      .catch((err) => {
+        sendResponse({ ok: false, error: err.message || 'Connection test failed' });
+      });
+    return true;
+  }
+
+  if (message.action === 'TEST_OLLAMA_CONNECTION') {
+    testOllamaConnection(message.ollamaUrl, message.model)
+      .then(sendResponse)
+      .catch((err) => {
+        sendResponse({ ok: false, error: err.message || 'Connection test failed' });
+      });
+    return true;
+  }
 });
 
 
@@ -314,289 +352,843 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Active request abort controller to cancel obsolete in-flight requests
 let activeRequestController = null;
 
+const SYSTEM_PROMPT = `You are an expert academic tutor and AI inference engine solving quiz questions.
+Output strictly valid JSON with keys: "option", "options", "answer", "reason", "confidence", "status", "isMultiple".
+RULES:
+1. Identify if the question is single-choice or multiple-answer ("select all that apply", "which are", plural characteristics, multiple correct options).
+2. For SINGLE-CHOICE questions:
+   - Identify the single best option.
+   - Set "option": "<Letter>" (e.g. "A").
+   - Set "options": ["<Letter>"].
+   - Set "answer": "<Option Text>".
+   - Set "isMultiple": false.
+3. For MULTIPLE-ANSWER questions:
+   - Evaluate EVERY available option independently against the question.
+   - Return ALL correct options. Never stop after the first correct answer.
+   - Set "options": ["A", "B", "D"] (array of all correct option letters).
+   - Set "option": "A, B, D" (comma-separated list of all correct option letters).
+   - Set "answer": complete text of each correct option formatted as lines (e.g. "A — Text 1\\nB — Text 2\\nD — Text 3").
+   - Set "isMultiple": true.
+   - In "reason", provide a concise explanation for EACH correct option (e.g. "- A: explanation\\n- B: explanation\\n- D: explanation").
+4. CRITICAL FOR NEGATIVE QUESTIONS: If the question contains "NOT", "EXCEPT", "FALSE", "INCORRECT", "LEAST", "NEVER", or "UNLIKE", focus on the negative qualifier. Identify the statement that is FALSE or does NOT apply, and choose that option.
+5. For matching questions, format "answer" with complete item pairings (e.g. "1-B, 2-D, 3-A") and "option" to matching choice.
+6. For short-answer/math, set "option": "", "options": [], and "answer" to calculated value.
+7. If genuinely ambiguous or uncertain, explain the uncertainty in "reason", calibrate confidence (0.60-0.75), but do not invent extra answers. Set "status": "success".`;
+
 /**
- * Proxy question payload to Express backend
+ * Extracts candidate option letters from parsed AI JSON output
+ */
+function extractCandidateLetters(parsed) {
+  const letters = [];
+  const seen = new Set();
+
+  function addLetter(raw) {
+    if (!raw) return;
+    const str = String(raw).trim();
+    const m = str.match(/^([A-Za-z0-9]+)[\.\:\)\-]?/);
+    if (m) {
+      const up = m[1].toUpperCase();
+      if (up.length <= 2 && up !== 'UNCERTAIN' && !seen.has(up)) {
+        seen.add(up);
+        letters.push(up);
+      }
+    }
+  }
+
+  if (Array.isArray(parsed.options)) {
+    parsed.options.forEach(addLetter);
+  }
+  if (Array.isArray(parsed.optionIds)) {
+    parsed.optionIds.forEach(addLetter);
+  }
+
+  const rawOption = String(parsed.option || parsed.choice || '').trim();
+  if (rawOption && rawOption.toUpperCase() !== 'UNCERTAIN') {
+    const parts = rawOption.split(/[,;&]|\band\b/i);
+    for (const part of parts) {
+      addLetter(part);
+    }
+  }
+
+  return letters;
+}
+
+/**
+ * Normalizes raw JSON response and matches against candidate options
+ */
+function normalizeAnswerPayload(parsed, payload, model, provider) {
+  const options = Array.isArray(payload.options) ? payload.options : [];
+  const questionText = String(payload.question || '').trim();
+  const isMultiWording = Boolean(payload.isMultiple) ||
+    /\b(select all|choose all|which (?:of the following|of these)?\s+are|which are|all that apply|check all|select multiple|more than one|select each|mark all|select two|select three|select (?:2|3|4)|choose two|choose three|choose (?:2|3|4)|multiple correct|any of the following are|identify all)\b/i.test(questionText);
+
+  let candidateLetters = extractCandidateLetters(parsed);
+
+  if (candidateLetters.length === 0 && (parsed.reason || parsed.explanation)) {
+    const combinedReason = `${parsed.reason || ''} ${parsed.explanation || ''}`;
+    const matches = combinedReason.matchAll(/\b(?:option|choice|answer)\s+([A-D])\b/gi);
+    for (const m of matches) {
+      const up = m[1].toUpperCase();
+      if (!candidateLetters.includes(up)) candidateLetters.push(up);
+    }
+  }
+
+  let isMultiple = false;
+  if (candidateLetters.length > 1) {
+    if (isMultiWording || parsed.isMultiple === true) {
+      isMultiple = true;
+    } else {
+      // Single answer question: keep only first option
+      candidateLetters = [candidateLetters[0]];
+    }
+  } else if (candidateLetters.length === 1 && isMultiWording && parsed.isMultiple === true) {
+    isMultiple = true;
+  }
+
+  const matchedOptions = [];
+  if (options.length > 0 && candidateLetters.length > 0) {
+    for (const letter of candidateLetters) {
+      let match = options.find(o => String(o.id).toUpperCase() === letter);
+      if (!match) {
+        const idx = letter.charCodeAt(0) - 65;
+        if (idx >= 0 && idx < options.length) match = options[idx];
+      }
+      if (!match) {
+        match = options.find(o => {
+          const m = String(o.text || '').match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*/);
+          return m && (m[1] || m[2] || m[3]).toUpperCase() === letter;
+        });
+      }
+
+      if (match) {
+        let cleanText = String(match.text || '').trim();
+        const mMatch = cleanText.match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
+        if (mMatch && mMatch[4]) {
+          cleanText = mMatch[4].trim();
+        }
+        matchedOptions.push({
+          id: letter,
+          text: cleanText
+        });
+      } else {
+        matchedOptions.push({
+          id: letter,
+          text: `Option ${letter}`
+        });
+      }
+    }
+  }
+
+  let rawAnswer = String(parsed.answer || parsed.result || '').trim();
+  if (rawAnswer.toLowerCase().includes('uncertain') || rawAnswer.toLowerCase().includes('needs verification') || rawAnswer.toLowerCase().includes('cannot determine')) {
+    rawAnswer = '';
+  }
+
+  if (matchedOptions.length === 0 && options.length > 0 && rawAnswer) {
+    const ansLower = rawAnswer.toLowerCase();
+    const textMatch = options.find(o => {
+      const raw = String(o.text || '').toLowerCase().trim();
+      const stripped = raw.replace(/^[a-z0-9]+[\.\:\)\-]\s*/i, '').trim();
+      return raw === ansLower || stripped === ansLower ||
+             (ansLower.length > 3 && (raw.includes(ansLower) || ansLower.includes(raw) || stripped.includes(ansLower) || ansLower.includes(stripped)));
+    });
+    if (textMatch) {
+      const mIdx = options.indexOf(textMatch);
+      const letter = String(textMatch.id || String.fromCharCode(65 + mIdx)).toUpperCase();
+      let cleanText = String(textMatch.text || '').trim();
+      const mMatch = cleanText.match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
+      if (mMatch && mMatch[4]) cleanText = mMatch[4].trim();
+      matchedOptions.push({ id: letter, text: cleanText });
+    }
+  }
+
+  let finalOption = '';
+  let finalAnswer = '';
+  let finalOptionIds = [];
+
+  if (matchedOptions.length > 0) {
+    finalOptionIds = matchedOptions.map(m => m.id);
+    finalOption = finalOptionIds.join(', ');
+    if (isMultiple) {
+      finalAnswer = matchedOptions.map(m => `${m.id} — ${m.text}`).join('\n');
+    } else {
+      finalAnswer = matchedOptions[0].text;
+    }
+  } else {
+    finalOption = candidateLetters.join(', ');
+    finalOptionIds = candidateLetters;
+    finalAnswer = rawAnswer || (finalOption ? `Option ${finalOption}` : 'Solution determined');
+  }
+
+  const rawReason = parsed.reason || parsed.explanation || `Selected ${finalOption} using ${provider} (${model}).`;
+  let finalExplanation = rawReason;
+  if (isMultiple) {
+    finalExplanation = `MULTIPLE ANSWER\n\n${finalAnswer}\n\nExplanation:\n${rawReason}`;
+  }
+
+  return {
+    option: finalOption,
+    options: finalOptionIds,
+    optionIds: finalOptionIds,
+    answer: finalAnswer,
+    answerText: finalAnswer,
+    isMultiple,
+    status: 'success',
+    confidence: isMultiple ? (parsed.confidence || 0.95) : 0.95,
+    explanation: finalExplanation,
+    reason: rawReason,
+    provider,
+    model,
+    isDirect: true
+  };
+}
+
+/**
+ * Direct official Google Gemini API solver with multimodal vision support
+ */
+async function callDirectGemini(payload, apiKey, modelName = 'gemini-2.5-flash') {
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 5) {
+    throw new Error('Please configure a valid Google Gemini API key in Settings');
+  }
+  const cleanKey = apiKey.trim();
+  const model = modelName || 'gemini-2.5-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+  const incomingImages = Array.isArray(payload.images) && payload.images.length > 0
+    ? payload.images
+    : (payload.image ? [payload.image] : []);
+
+  let promptText = `${SYSTEM_PROMPT}\n\n`;
+  if (incomingImages.length > 0) {
+    promptText += 'Visual Question Mode: Carefully inspect and solve the question shown in the attached image.\n';
+  }
+  if (payload.question && payload.question.trim()) {
+    promptText += `Question:\n${payload.question.trim()}\n\n`;
+  }
+  if (Array.isArray(payload.options) && payload.options.length > 0) {
+    promptText += 'Options:\n';
+    payload.options.forEach(opt => {
+      promptText += `- [${opt.id}]: ${opt.text}\n`;
+    });
+    promptText += '\nSelect the best option. Output JSON with "option": "<Option Letter>" and "answer": "<Option Text>".';
+  } else {
+    promptText += '\nOutput strictly valid JSON with "option" and "answer".';
+  }
+
+  const parts = [{ text: promptText }];
+
+  for (const img of incomingImages) {
+    if (typeof img === 'string' && img.trim()) {
+      let mimeType = 'image/jpeg';
+      let data = img;
+      if (img.startsWith('data:')) {
+        const match = img.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          mimeType = match[1];
+          data = match[2];
+        } else {
+          data = img.replace(/^data:[^;]+;base64,/, '');
+        }
+      }
+      parts.push({
+        inlineData: {
+          mimeType,
+          data
+        }
+      });
+    }
+  }
+
+  const generationConfig = {
+    temperature: 0.1,
+    maxOutputTokens: 350,
+    responseMimeType: 'application/json'
+  };
+  if (model.includes('2.5')) {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': cleanKey
+    },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts }],
+      generationConfig
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  console.log('[AI Provider Diagnostic]', {
+    selectedProvider: 'gemini',
+    providerActuallyCalled: 'gemini',
+    selectedModel: model,
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/...:generateContent',
+    status: res.status
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    let parsedErr = null;
+    try { parsedErr = JSON.parse(errText); } catch (_) {}
+    const rawMsg = parsedErr?.error?.message || errText;
+
+    if (res.status === 400 || res.status === 401 || res.status === 403 || /api_key|invalid|unregistered/i.test(rawMsg)) {
+      throw new Error('Gemini Authentication Error: Invalid API key. Please check your Gemini API key in Settings.');
+    }
+    if (res.status === 404) {
+      throw new Error(`Gemini Model Error: "${model}" is not available for this API key.`);
+    }
+    if (res.status === 429 || /quota|exhausted|resource/i.test(rawMsg)) {
+      throw new Error('Gemini Quota Error: Rate limit or quota exceeded on your Gemini API key.');
+    }
+    throw new Error(`Gemini API error (${res.status}): ${rawMsg.slice(0, 160)}`);
+  }
+
+  const data = await res.json();
+  const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!rawText) {
+    throw new Error('Gemini returned an empty response');
+  }
+
+  const parsed = extractJSON(rawText) || {};
+  return normalizeAnswerPayload(parsed, payload, model, 'gemini');
+}
+
+/**
+ * Direct official OpenAI API solver with multimodal vision support
+ */
+async function callDirectOpenAI(payload, apiKey, modelName = 'gpt-4o-mini') {
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 5) {
+    throw new Error('Please configure a valid OpenAI API key in Settings');
+  }
+  const cleanKey = apiKey.trim();
+  const model = modelName || 'gpt-4o-mini';
+  const url = 'https://api.openai.com/v1/chat/completions';
+
+  const incomingImages = Array.isArray(payload.images) && payload.images.length > 0
+    ? payload.images
+    : (payload.image ? [payload.image] : []);
+
+  let userPrompt = '';
+  if (incomingImages.length > 0) {
+    userPrompt += 'Visual Question Mode: Carefully inspect and solve the question shown in the attached image.\n';
+  }
+  if (payload.question && payload.question.trim()) {
+    userPrompt += `Question:\n${payload.question.trim()}\n\n`;
+  }
+  if (Array.isArray(payload.options) && payload.options.length > 0) {
+    userPrompt += 'Options:\n';
+    payload.options.forEach(opt => {
+      userPrompt += `- [${opt.id}]: ${opt.text}\n`;
+    });
+    userPrompt += '\nSelect the best option. Output JSON with "option": "<Option Letter>" and "answer": "<Option Text>".';
+  } else {
+    userPrompt += '\nOutput strictly valid JSON with "option" and "answer".';
+  }
+
+  const userContent = [{ type: 'text', text: userPrompt }];
+
+  for (const img of incomingImages) {
+    if (typeof img === 'string' && img.trim()) {
+      const imageUrl = img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`;
+      userContent.push({
+        type: 'image_url',
+        image_url: { url: imageUrl, detail: 'high' }
+      });
+    }
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cleanKey}`
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.1,
+      max_tokens: 300,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userContent }
+      ]
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  console.log('[AI Provider Diagnostic]', {
+    selectedProvider: 'openai',
+    providerActuallyCalled: 'openai',
+    selectedModel: model,
+    endpoint: url,
+    status: res.status
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    let parsedErr = null;
+    try { parsedErr = JSON.parse(errText); } catch (_) {}
+    const rawMsg = parsedErr?.error?.message || errText;
+
+    if (res.status === 401) {
+      throw new Error('OpenAI Authentication Error: Invalid API key. Please check your OpenAI API key in Settings.');
+    }
+    if (res.status === 403) {
+      throw new Error('OpenAI Permission Error: Access forbidden or country not supported.');
+    }
+    if (res.status === 404) {
+      throw new Error(`OpenAI Model Error: "${model}" is not available for your account.`);
+    }
+    if (res.status === 429 || /quota|insufficient_quota|credit/i.test(rawMsg)) {
+      throw new Error('OpenAI Quota Error: Quota exceeded or insufficient credits on your OpenAI account.');
+    }
+    throw new Error(`OpenAI API error (${res.status}): ${rawMsg.slice(0, 160)}`);
+  }
+
+  const data = await res.json();
+  const rawText = data?.choices?.[0]?.message?.content;
+  if (!rawText) {
+    throw new Error('OpenAI returned an empty response');
+  }
+
+  const parsed = extractJSON(rawText) || {};
+  return normalizeAnswerPayload(parsed, payload, model, 'openai');
+}
+
+/**
+ * Independent connection test for Google Gemini
+ */
+async function testGeminiConnection(apiKey, model) {
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 5) {
+    return { ok: false, error: 'Please enter a valid Google Gemini API key.' };
+  }
+  const cleanKey = apiKey.trim();
+  const targetModel = model || 'gemini-2.5-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': cleanKey
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: 'ping' }] }],
+        generationConfig: { maxOutputTokens: 5 }
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    console.log('[AI Provider Diagnostic]', {
+      test: 'gemini',
+      model: targetModel,
+      endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/...:generateContent',
+      status: res.status
+    });
+
+    if (res.ok) {
+      return { ok: true, message: `Connection successful! Gemini API is online and verified (Model: ${targetModel}).` };
+    }
+
+    const errJson = await res.json().catch(() => ({}));
+    const rawMsg = errJson?.error?.message || `HTTP ${res.status}`;
+
+    if (res.status === 400 || res.status === 401 || res.status === 403 || /api_key|invalid|unregistered/i.test(rawMsg)) {
+      return { ok: false, error: 'Invalid API key or authentication failed.' };
+    }
+    if (res.status === 404) {
+      return { ok: false, error: `Model unavailable (${targetModel} not found).` };
+    }
+    if (res.status === 429 || /quota|exhausted|resource/i.test(rawMsg)) {
+      return { ok: false, error: 'Rate limit or quota exceeded on this Gemini API key.' };
+    }
+    return { ok: false, error: `Gemini error (${res.status}): ${rawMsg}` };
+  } catch (err) {
+    console.log('[AI Provider Diagnostic]', {
+      test: 'gemini',
+      model: targetModel,
+      endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/...:generateContent',
+      error: err.message
+    });
+    return { ok: false, error: `Network error: ${err.message}` };
+  }
+}
+
+/**
+ * Independent connection test for OpenAI
+ */
+async function testOpenAIConnection(apiKey, model) {
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 5) {
+    return { ok: false, error: 'Please enter a valid OpenAI API key.' };
+  }
+  const cleanKey = apiKey.trim();
+  const targetModel = model || 'gpt-4o-mini';
+  const url = 'https://api.openai.com/v1/chat/completions';
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cleanKey}`
+      },
+      body: JSON.stringify({
+        model: targetModel,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 5
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+
+    console.log('[AI Provider Diagnostic]', {
+      test: 'openai',
+      model: targetModel,
+      endpoint: url,
+      status: res.status
+    });
+
+    if (res.ok) {
+      return { ok: true, message: `Connection successful! OpenAI API is online and verified (Model: ${targetModel}).` };
+    }
+
+    const errJson = await res.json().catch(() => ({}));
+    const rawMsg = errJson?.error?.message || `HTTP ${res.status}`;
+
+    if (res.status === 401) {
+      return { ok: false, error: 'Invalid API key.' };
+    }
+    if (res.status === 403) {
+      return { ok: false, error: 'Authentication failed or access restricted.' };
+    }
+    if (res.status === 404) {
+      return { ok: false, error: `Model unavailable (${targetModel} not found).` };
+    }
+    if (res.status === 429 || /quota|insufficient_quota|credit/i.test(rawMsg)) {
+      return { ok: false, error: 'Rate limit or quota exceeded (check account balance at platform.openai.com).' };
+    }
+    return { ok: false, error: `OpenAI error (${res.status}): ${rawMsg}` };
+  } catch (err) {
+    console.log('[AI Provider Diagnostic]', {
+      test: 'openai',
+      model: targetModel,
+      endpoint: url,
+      error: err.message
+    });
+    return { ok: false, error: `Network error: ${err.message}` };
+  }
+}
+
+/**
+ * Independent connection test for Ollama Local
+ */
+async function testOllamaConnection(ollamaUrl, model) {
+  const baseUrl = (ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+  const targetModel = model || 'gemma3:4b';
+  try {
+    const ping = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(3500) });
+    if (!ping.ok) {
+      return { ok: false, error: `Ollama server unavailable (HTTP ${ping.status})` };
+    }
+    const data = await ping.json();
+    const installed = Array.isArray(data.models) ? data.models.map(m => m.name) : [];
+
+    console.log('[AI Provider Diagnostic]', {
+      test: 'ollama',
+      model: targetModel,
+      endpoint: `${baseUrl}/api/tags`,
+      status: ping.status
+    });
+
+    if (installed.length === 0) {
+      return { ok: false, error: 'Ollama server is running, but no models are installed. Please run "ollama pull gemma3:4b".' };
+    }
+
+    const found = installed.some(name => name === targetModel || name.startsWith(targetModel + ':') || targetModel.startsWith(name + ':'));
+    if (!found) {
+      return {
+        ok: false,
+        error: `Model unavailable: "${targetModel}" is not installed in Ollama. Available models: ${installed.slice(0, 5).join(', ')}`
+      };
+    }
+
+    return {
+      ok: true,
+      message: `Connection successful! Ollama is online and model "${targetModel}" is ready.`
+    };
+  } catch (err) {
+    console.log('[AI Provider Diagnostic]', {
+      test: 'ollama',
+      model: targetModel,
+      endpoint: `${baseUrl}/api/tags`,
+      error: err.message
+    });
+    return { ok: false, error: 'Ollama server unavailable. Please make sure the Ollama application is running on your computer.' };
+  }
+}
+
+// In-memory fast answer cache and in-flight request coalescing
+const recentAnswerCache = new Map();
+const inFlightRequests = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+function hashImagePayload(img) {
+  if (!img || typeof img !== 'string') return '';
+  let hash = 0;
+  const len = img.length;
+  const step = Math.max(1, Math.floor(len / 500));
+  for (let i = 0; i < len; i += step) {
+    hash = ((hash << 5) - hash) + img.charCodeAt(i);
+    hash |= 0;
+  }
+  return `${len}_${hash}`;
+}
+
+function computeQuestionHash(payload, provider = '', model = '') {
+  const q = (payload.question || '').trim().toLowerCase();
+  const opts = (payload.options || []).map(o => `${o.id}:${(o.text || '').trim().toLowerCase()}`).join('|');
+  const imgStr = payload.image || (payload.images && payload.images[0]) || '';
+  const imgHash = hashImagePayload(imgStr);
+  return `${provider}:::${model}:::${q}:::${opts}:::${imgHash}`;
+}
+
+/**
+ * Strict Provider Routing: Routes question directly to selected provider without cross-fallback
  */
 async function handleAnalyzeQuestion(payload) {
-  // Cancel previous in-flight request if user moved to a new question
+  const storage = await chrome.storage.local.get([
+    'activeProvider',
+    'geminiApiKey',
+    'geminiSelectedModel',
+    'userGeminiKey',
+    'openaiApiKey',
+    'openaiSelectedModel',
+    'userOpenAIKey',
+    'ollamaUrl',
+    'ollamaSelectedModel',
+    'backendUrl',
+    'localBackendUrl',
+    'customProviders'
+  ]);
+
+  const rawProvider = payload.provider || storage.activeProvider || 'gemini';
+  let provider = (rawProvider || 'gemini').toLowerCase();
+  if (provider.startsWith('gemini')) provider = 'gemini';
+  if (provider === 'chatgpt' || provider === 'openai') provider = 'openai';
+
+  const targetModel = payload.model || (provider === 'gemini' ? storage.geminiSelectedModel : (provider === 'openai' ? storage.openaiSelectedModel : storage.ollamaSelectedModel)) || '';
+  const questionKey = computeQuestionHash(payload, provider, targetModel);
+
+  // Return cached result if same question asked recently
+  const cachedEntry = recentAnswerCache.get(questionKey);
+  if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS) && payload.skipCache !== true) {
+    return { success: true, data: { ...cachedEntry.data, cached: true } };
+  }
+
+  // Coalesce duplicate in-flight requests for the exact same question
+  if (inFlightRequests.has(questionKey)) {
+    return await inFlightRequests.get(questionKey);
+  }
+
+  // Cancel previous in-flight request if user moved to a different question
   if (activeRequestController) {
     try {
-      activeRequestController.abort();
+      activeRequestController.abort(new DOMException('Superseded by newer request', 'AbortError'));
     } catch (e) {}
   }
   activeRequestController = new AbortController();
   const currentController = activeRequestController;
 
-  const storage = await chrome.storage.local.get([
-    'backendUrl',
-    'localBackendUrl',
-    'ollamaUrl',
-    'ollamaSelectedModel',
-    'activeProvider',
-    'customProviders'
-  ]);
-  const customProviders = storage.customProviders || [];
-  const selectedProvider = payload.provider || storage.activeProvider || 'gemini_1';
+  const executionPromise = (async () => {
+    return await executeProviderRouting(payload, provider, rawProvider, targetModel, storage, currentController);
+  })();
 
-  let targetEndpoint;
-  let timeoutMs = 25000;
-  let isLocalOllama = false;
-
-  console.log('[Moodle AI Diagnostic 10/14] Provider selected:', { provider: selectedProvider });
-
-  // If local Ollama is active on user machine, use an agile 8s cloud timeout for instant seamless fallback!
-  if (selectedProvider !== 'ollama') {
-    try {
-      const checkOllamaHost = (storage.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-      const fastPing = await fetch(`${checkOllamaHost}/api/tags`, { signal: AbortSignal.timeout(600) }).catch(() => null);
-      if (fastPing && fastPing.ok) {
-        timeoutMs = 8000;
-      }
-    } catch (_) {}
-  }
-
-  // Secure cloud routing: Keys are managed safely on Render server environment variables
-  // or user-configured custom keys. No secrets are hardcoded in client code.
-
-  if (selectedProvider === 'ollama') {
-    isLocalOllama = true;
-    const localUrl = (storage.localBackendUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
-    targetEndpoint = `${localUrl}/api/solve`;
-    payload.provider = 'ollama';
-    payload.model = payload.model || storage.ollamaSelectedModel;
-    payload.ollamaUrl = storage.ollamaUrl || 'http://127.0.0.1:11434';
-    timeoutMs = 60000; // Local model generation timeout (up to 60s)
-
-    if (!payload.model) {
-      return {
-        success: false,
-        error: 'No local Ollama model selected. Please open extension settings and choose an installed model.'
-      };
-    }
-  } else if (selectedProvider.startsWith('gemini')) {
-    const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
-    const cleanUrl = backendUrl.replace(/\/+$/, '');
-    targetEndpoint = `${cleanUrl}/api/answer`;
-    payload.provider = 'gemini';
-    payload.model = payload.model || 'gemini-flash-lite-latest';
-    payload.keySlot = selectedProvider;
-    if (storage.userGeminiKey) {
-      payload.apiKey = storage.userGeminiKey;
-    }
-  } else if (selectedProvider === 'chatgpt' || selectedProvider === 'openai') {
-    const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
-    const cleanUrl = backendUrl.replace(/\/+$/, '');
-    targetEndpoint = `${cleanUrl}/api/answer`;
-    payload.provider = 'chatgpt';
-    if (storage.userOpenAIKey) {
-      payload.apiKey = storage.userOpenAIKey;
-    }
-  } else if (selectedProvider.startsWith('custom_')) {
-    const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
-    const cleanUrl = backendUrl.replace(/\/+$/, '');
-    targetEndpoint = `${cleanUrl}/api/answer`;
-    const custom = customProviders.find(p => p.id === selectedProvider);
-    if (custom) {
-      payload.provider = 'custom';
-      payload.apiKey = custom.apiKey;
-      payload.endpoint = custom.endpoint;
-      payload.model = custom.model;
-    }
-  } else {
-    const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
-    const cleanUrl = backendUrl.replace(/\/+$/, '');
-    targetEndpoint = `${cleanUrl}/api/answer`;
-    payload.provider = selectedProvider;
-  }
-
-  // Abort timeout
-  const timeoutId = setTimeout(() => currentController.abort(), timeoutMs);
-
-  let response = null;
+  inFlightRequests.set(questionKey, executionPromise);
   try {
-    response = await fetch(targetEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload),
-      signal: currentController.signal
-    });
-
-    clearTimeout(timeoutId);
-    if (activeRequestController === currentController) {
-      activeRequestController = null;
+    const res = await executionPromise;
+    if (res && res.success && res.data) {
+      recentAnswerCache.set(questionKey, { data: res.data, timestamp: Date.now() });
     }
-
-    console.log('[Moodle AI Diagnostic 11/14] Provider request:', {
-      endpoint: targetEndpoint.replace(/^https?:\/\/[^\/]+/, ''),
-      status: response ? response.status : undefined,
-      ok: response ? response.ok : false
-    });
-
-    if (!response.ok) {
-      const errJson = await response.json().catch(() => ({}));
-      throw new Error(errJson.message || errJson.error || `HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-    if (data && data.realUsage) {
-      await updateRealUsageStats(data.realUsage);
-    } else {
-      await updateRealUsageStats({ provider: payload.provider || storage.activeProvider, totalTokens: 140 });
-    }
-    return {
-      success: true,
-      data: {
-        ...data,
-        isOllama: false,
-        source: 'cloud'
-      }
-    };
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (activeRequestController === currentController) {
-      activeRequestController = null;
-    }
-
-    console.log('[Moodle AI Diagnostic 11/14] Provider request:', {
-      endpoint: targetEndpoint.replace(/^https?:\/\/[^\/]+/, ''),
-      status: response ? response.status : undefined,
-      ok: response ? response.ok : false
-    });
-
-    // Auto-probe alternate port 3000/3001 if connection refused
-    if (isLocalOllama && (targetEndpoint.includes(':3000') || targetEndpoint.includes(':3001'))) {
-      const altEndpoint = targetEndpoint.includes(':3000')
-        ? targetEndpoint.replace(':3000', ':3001')
-        : targetEndpoint.replace(':3001', ':3000');
-      try {
-        const altResponse = await fetch(altEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (altResponse.ok) {
-          const altData = await altResponse.json();
-          const newBackend = altEndpoint.replace('/api/solve', '');
-          await chrome.storage.local.set({ localBackendUrl: newBackend });
-          return { success: true, data: altData };
-        }
-      } catch (_) {}
-    }
-
-    // Direct Ollama execution (bypasses Node.js backend when offline or stopped)
-    if (isLocalOllama) {
-      try {
-        const directData = await runDirectOllamaSolve(payload, payload.ollamaUrl, payload.model);
-        return {
-          success: true,
-          data: {
-            ...directData,
-            isOllama: true,
-            provider: 'ollama',
-            source: 'ollama'
-          }
-        };
-      } catch (directErr) {
-        console.warn('[Direct Ollama Failed]:', directErr.message);
-        let cleanErr = directErr.message || 'Local Ollama evaluation failed';
-        if (cleanErr.includes('Failed to fetch') || cleanErr.includes('ECONNREFUSED')) {
-          cleanErr = 'Ollama is not running. Please open the Ollama app on your computer.';
-        } else if (cleanErr.includes('403')) {
-          cleanErr = 'Ollama 403: Origin blocked. Please reload extension at chrome://extensions';
-        } else if (cleanErr.includes('AbortError') || cleanErr.includes('timed out')) {
-          cleanErr = 'Ollama timed out. The local model is taking too long to compute.';
-        }
-        return { success: false, error: cleanErr };
-      }
-    }
-
-    let msg = error.message;
-
-    // Record quota exhaustion if error indicates rate/quota limit
-    if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
-      try {
-        const today = new Date().toISOString().slice(0, 10);
-        const st = await chrome.storage.local.get(['realUsageStats', 'activeProvider']);
-        const stats = st.realUsageStats || { date: today, providers: {} };
-        const pKey = (payload.provider || st.activeProvider || 'gemini').toLowerCase();
-        const current = stats.providers[pKey] || { solvesToday: 0, tokensToday: 0 };
-        current.status = 'quota_exhausted';
-        stats.providers[pKey] = current;
-        await chrome.storage.local.set({ realUsageStats: stats });
-      } catch (e) {}
-    }
-
-    // Automatic failover: if ChatGPT/OpenAI has 0 credits or quota exceeded, seamlessly retry with Gemini
-    if ((selectedProvider === 'chatgpt' || selectedProvider === 'openai') && (msg.includes('quota') || msg.includes('credit') || msg.includes('insufficient_quota'))) {
-      console.warn('[Background] OpenAI quota exceeded. Automatically retrying with Google Gemini...');
-      try {
-        const fallbackPayload = { ...payload, provider: 'gemini' };
-        delete fallbackPayload.apiKey;
-        const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
-        const fallbackRes = await fetch(`${backendUrl.replace(/\/+$/, '')}/api/answer`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(fallbackPayload)
-        });
-        if (fallbackRes.ok) {
-          const fallbackData = await fallbackRes.json();
-          if (fallbackData && fallbackData.realUsage) {
-            await updateRealUsageStats(fallbackData.realUsage);
-          }
-          return { success: true, data: fallbackData };
-        }
-      } catch (fbErr) {
-        console.warn('[Background] Failover to Gemini failed:', fbErr.message);
-      }
-    }
-
-    // Automatic failover to local Ollama if Cloud request fails, times out, or exceeds quota
-    // and Ollama is active on the user's computer (port 11434)
-    if (!isLocalOllama) {
-      const ollamaHost = (storage.ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-      const localModel = storage.ollamaSelectedModel || 'gemma3:4b';
-      try {
-        const pingOllama = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) });
-        if (pingOllama.ok) {
-          console.warn(`[Background] Cloud request encountered issue (${error.message}). Seamlessly resolving via local Ollama (${localModel})...`);
-          const directData = await runDirectOllamaSolve(payload, ollamaHost, localModel);
-          if (directData && (directData.answer || directData.option)) {
-            return {
-              success: true,
-              data: {
-                ...directData,
-                source: 'ollama_fallback',
-                provider: 'ollama',
-                isFallback: true,
-                isOllama: true
-              }
-            };
-          }
-        }
-      } catch (ollamaPingErr) {
-        console.warn('[Background] Local Ollama fallback unavailable:', ollamaPingErr.message);
-      }
-    }
-
-    if (error.name === 'AbortError' || msg.includes('aborted')) {
-      if (isLocalOllama) {
-        msg = `Ollama generation timed out (${timeoutMs / 1000}s). The model may still be loading into RAM.`;
-      } else {
-        msg = 'Request timed out. The backend server may be waking up or taking longer to process.';
-      }
-    } else if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('ECONNREFUSED')) {
-      if (isLocalOllama) {
-        const localUrl = storage.localBackendUrl || 'http://127.0.0.1:3000';
-        msg = `Local backend or Ollama is unreachable at ${localUrl}. Ensure your local backend (port 3000) and Ollama are running.`;
-      } else {
-        const backendUrl = storage.backendUrl || 'https://extension-w1ac.onrender.com';
-        msg = `Backend unreachable at ${backendUrl}`;
-      }
-    }
-    return { success: false, error: msg };
+    return res;
+  } finally {
+    inFlightRequests.delete(questionKey);
   }
+}
+
+async function executeProviderRouting(payload, provider, rawProvider, targetModel, storage, currentController) {
+
+  console.log('[Moodle AI Diagnostic 10/14] Provider selected:', { rawProvider, routedProvider: provider });
+
+  // 1. GOOGLE GEMINI ROUTING
+  if (provider === 'gemini') {
+    const apiKey = (storage.geminiApiKey || storage.userGeminiKey || payload.apiKey || '').trim();
+    const model = payload.model || storage.geminiSelectedModel || 'gemini-2.5-flash';
+
+    console.log('[AI Provider Routing]', {
+      selectedProvider: rawProvider,
+      providerActuallyCalled: 'gemini',
+      selectedModel: model,
+      endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/...:generateContent'
+    });
+
+    try {
+      if (apiKey) {
+        const result = await callDirectGemini(payload, apiKey, model);
+        await updateRealUsageStats({ provider: 'gemini', totalTokens: 140 });
+        return { success: true, data: { ...result, isOllama: false, source: 'gemini' } };
+      } else if (storage.backendUrl) {
+        const cleanUrl = storage.backendUrl.replace(/\/+$/, '');
+        const targetEndpoint = `${cleanUrl}/api/answer`;
+        const res = await fetch(targetEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, provider: 'gemini', model }),
+          signal: currentController.signal
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.message || errJson.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        await updateRealUsageStats(data.realUsage || { provider: 'gemini', totalTokens: 140 });
+        return { success: true, data: { ...data, provider: 'gemini', isOllama: false, source: 'gemini' } };
+      } else {
+        throw new Error('Please configure your Google Gemini API key in Extension Settings.');
+      }
+    } catch (err) {
+      console.log('[AI Provider Routing Error]', {
+        provider: 'gemini',
+        sanitizedError: err.message
+      });
+      // STRICT ISOLATION: Never fall back to Ollama or OpenAI
+      return { success: false, error: err.message };
+    }
+  }
+
+  // 2. OPENAI ROUTING
+  if (provider === 'openai') {
+    const apiKey = (storage.openaiApiKey || storage.userOpenAIKey || payload.apiKey || '').trim();
+    const model = payload.model || storage.openaiSelectedModel || 'gpt-4o-mini';
+
+    console.log('[AI Provider Routing]', {
+      selectedProvider: rawProvider,
+      providerActuallyCalled: 'openai',
+      selectedModel: model,
+      endpoint: 'https://api.openai.com/v1/chat/completions'
+    });
+
+    try {
+      if (apiKey) {
+        const result = await callDirectOpenAI(payload, apiKey, model);
+        await updateRealUsageStats({ provider: 'chatgpt', totalTokens: 140 });
+        return { success: true, data: { ...result, isOllama: false, source: 'openai' } };
+      } else if (storage.backendUrl) {
+        const cleanUrl = storage.backendUrl.replace(/\/+$/, '');
+        const targetEndpoint = `${cleanUrl}/api/answer`;
+        const res = await fetch(targetEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, provider: 'chatgpt', model }),
+          signal: currentController.signal
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.message || errJson.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        await updateRealUsageStats(data.realUsage || { provider: 'chatgpt', totalTokens: 140 });
+        return { success: true, data: { ...data, provider: 'openai', isOllama: false, source: 'openai' } };
+      } else {
+        throw new Error('Please configure your OpenAI API key in Extension Settings.');
+      }
+    } catch (err) {
+      console.log('[AI Provider Routing Error]', {
+        provider: 'openai',
+        sanitizedError: err.message
+      });
+      // STRICT ISOLATION: Never fall back to Ollama or Gemini
+      return { success: false, error: err.message };
+    }
+  }
+
+  // 3. OLLAMA LOCAL ROUTING
+  if (provider === 'ollama') {
+    const ollamaUrl = storage.ollamaUrl || 'http://127.0.0.1:11434';
+    const model = payload.model || storage.ollamaSelectedModel;
+
+    console.log('[AI Provider Routing]', {
+      selectedProvider: 'ollama',
+      providerActuallyCalled: 'ollama',
+      selectedModel: model || 'auto',
+      endpoint: `${ollamaUrl.replace(/\/+$/, '')}/api/generate`
+    });
+
+    try {
+      const directData = await runDirectOllamaSolve(payload, ollamaUrl, model);
+      await updateRealUsageStats({ provider: 'ollama', totalTokens: 100 });
+      return {
+        success: true,
+        data: {
+          ...directData,
+          isOllama: true,
+          provider: 'ollama',
+          source: 'ollama'
+        }
+      };
+    } catch (directErr) {
+      console.log('[AI Provider Routing Error]', {
+        provider: 'ollama',
+        sanitizedError: directErr.message
+      });
+      let cleanErr = directErr.message || 'Local Ollama evaluation failed';
+      if (cleanErr.includes('Failed to fetch') || cleanErr.includes('ECONNREFUSED')) {
+        cleanErr = 'Ollama is not running. Please open the Ollama app on your computer.';
+      } else if (cleanErr.includes('403')) {
+        cleanErr = 'Ollama 403: Origin blocked. Please reload extension at chrome://extensions';
+      } else if (cleanErr.includes('AbortError') || cleanErr.includes('timed out')) {
+        cleanErr = 'Ollama timed out. The local model is taking too long to compute.';
+      }
+      // STRICT ISOLATION: Never fall back to Gemini or OpenAI
+      return { success: false, error: cleanErr };
+    }
+  }
+
+  // 4. CUSTOM PROVIDERS
+  if (rawProvider.startsWith('custom_')) {
+    const custom = (storage.customProviders || []).find(p => p.id === rawProvider);
+    if (!custom) {
+      return { success: false, error: `Custom provider "${rawProvider}" not found.` };
+    }
+    const cleanUrl = (storage.backendUrl || 'https://extension-w1ac.onrender.com').replace(/\/+$/, '');
+    try {
+      const res = await fetch(`${cleanUrl}/api/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          provider: 'custom',
+          apiKey: custom.apiKey,
+          endpoint: custom.endpoint,
+          model: custom.model
+        }),
+        signal: currentController.signal
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || errJson.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      return { success: true, data: { ...data, isOllama: false, provider: rawProvider } };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  return { success: false, error: `Unrecognized AI provider: "${rawProvider}". Please select Gemini, OpenAI, or Ollama.` };
 }
 
 /**
@@ -663,18 +1255,58 @@ function extractJSON(text) {
   const last = str.lastIndexOf('}');
   if (first !== -1 && last !== -1 && last > first) {
     str = str.substring(first, last + 1);
+  } else if (first !== -1 && last <= first) {
+    // Unclosed JSON object: try auto-closing it
+    str = str.substring(first);
+    if (!str.endsWith('}')) {
+      if (str.split('"').length % 2 === 0) str += '"';
+      str += '}';
+    }
   }
+
   try {
     return JSON.parse(str);
   } catch (_) {
+    // 1. Try cleaning control characters and repairing trailing commas
     try {
-      const repaired = str.replace(/,\s*([\]}])/g, '$1');
+      const repaired = str
+        .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+        .replace(/,\s*([\]}])/g, '$1');
       return JSON.parse(repaired);
-    } catch (e) {
+    } catch (e1) {
+      // 2. Resilient regex fallback for option and answer from partial/streamed text
+      const optMatch = text.match(/"(?:option|choice)"\s*:\s*"([^"]+)"/i) || text.match(/(?:option|choice)\s*:\s*([A-Za-z0-9_\-]+)/i);
+      const ansMatch = text.match(/"(?:answer|result)"\s*:\s*"([^"]+)"/i) || text.match(/(?:answer|result)\s*:\s*([^\n\r,}]+)/i);
+      const rsnMatch = text.match(/"(?:reason|explanation)"\s*:\s*"([^"]+)"/i);
+      const optVal = optMatch ? optMatch[1].trim() : '';
+      const ansVal = ansMatch ? ansMatch[1].trim() : '';
+
+      // Only accept if at least a valid non-empty answer or both option+answer exist
+      if (optVal && ansVal) {
+        return {
+          option: optVal,
+          answer: ansVal,
+          reason: rsnMatch ? rsnMatch[1].trim() : 'Extracted from stream response.',
+          status: 'success',
+          confidence: 0.85
+        };
+      } else if (ansVal) {
+        return {
+          option: '',
+          answer: ansVal,
+          reason: rsnMatch ? rsnMatch[1].trim() : 'Partial answer extracted.',
+          status: 'partial',
+          confidence: 0.60
+        };
+      }
+      // Never silently treat incomplete or unparseable JSON as a correct answer
       return null;
     }
   }
 }
+
+// In-memory cache for model capabilities to avoid repeated /api/show network calls
+const modelCapabilityCache = new Map();
 
 async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434', modelName) {
   const baseUrl = (ollamaUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
@@ -707,23 +1339,26 @@ async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434
 
   let rawImages = [];
   if (incomingImages.length > 0) {
-    // Check if selected model is vision capable or text-only
-    let isVision = false;
-    try {
-      const showRes = await fetch(`${baseUrl}/api/show`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: model }),
-        signal: AbortSignal.timeout(2000)
-      }).catch(() => null);
-      if (showRes && showRes.ok) {
-        const showData = await showRes.json();
-        isVision = detectModelCapability(showData) === 'Vision';
-      } else {
+    // Check if selected model is vision capable or text-only (with caching)
+    let isVision = modelCapabilityCache.get(model);
+    if (typeof isVision !== 'boolean') {
+      try {
+        const showRes = await fetch(`${baseUrl}/api/show`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: model }),
+          signal: AbortSignal.timeout(2000)
+        }).catch(() => null);
+        if (showRes && showRes.ok) {
+          const showData = await showRes.json();
+          isVision = detectModelCapability(showData) === 'Vision';
+        } else {
+          isVision = detectModelCapability({ name: model }) === 'Vision';
+        }
+      } catch (_) {
         isVision = detectModelCapability({ name: model }) === 'Vision';
       }
-    } catch (_) {
-      isVision = detectModelCapability({ name: model }) === 'Vision';
+      modelCapabilityCache.set(model, isVision);
     }
 
     const hasUsableText = (payload.question && payload.question.trim().length > 10) || (Array.isArray(payload.options) && payload.options.length > 0);
@@ -754,38 +1389,38 @@ async function runDirectOllamaSolve(payload, ollamaUrl = 'http://127.0.0.1:11434
   if (payload.question && payload.question.trim()) {
     prompt += `Question:\n${payload.question.trim()}\n\n`;
   }
+  const isMultiWording = Boolean(payload.isMultiple) || /\b(select all|choose all|which (?:of the following|of these)?\s+are|which are|all that apply|check all|select multiple|more than one|select each|mark all|multiple correct)\b/i.test(payload.question || '');
   if (Array.isArray(payload.options) && payload.options.length > 0) {
     prompt += `Options:\n`;
     payload.options.forEach(opt => {
       prompt += `- [${opt.id}]: ${opt.text}\n`;
     });
-    prompt += `\nSelect the best option. Output JSON with "option": "<Option Letter>" and "answer": "<Option Text>".`;
+    if (isMultiWording) {
+      prompt += `\nThis is a MULTIPLE-ANSWER question. Evaluate EVERY option independently. Output strictly valid JSON with "options": ["A", "B", ...], "option": "A, B, ...", and "answer".`;
+    } else {
+      prompt += `\nSelect the best option. Output JSON with "option": "<Option Letter>" and "answer": "<Option Text>".`;
+    }
   } else {
     prompt += `\nOutput strictly valid JSON with "option" and "answer".`;
   }
 
-  const system = `You are an expert academic tutor and AI inference engine solving quiz questions.
-Output strictly valid JSON with keys: "option", "answer", "reason", "confidence", "status".
-RULES:
-1. Identify the question type (single-choice, multiple-choice, numerical, matching, true/false, DSA, coding).
-2. CRITICAL FOR NEGATIVE QUESTIONS: If the question contains "NOT", "EXCEPT", "FALSE", "INCORRECT", "LEAST", "NEVER", or "UNLIKE", focus on the negative qualifier. Identify the statement that is FALSE or does NOT apply, and choose that option.
-3. For multiple-choice questions, set "option" to the exact option letter (e.g. "A", "B", "C", "D") and "answer" to the exact option text.
-4. For matching questions, format "answer" with the complete item pairings (e.g. "1-B, 2-D, 3-A") and "option" to the corresponding matching choice letter.
-5. For short-answer/math, set "option" to "" and "answer" to the calculated value.
-6. Provide a concise 1-sentence verification in "reason".
-7. Calibrate "confidence": 0.85-1.0 for verified answers, 0.60-0.80 if ambiguous. Set "status" to "success".`;
+  const system = SYSTEM_PROMPT;
+
+  const estimatedInputTokens = Math.ceil((prompt.length + system.length) / 3);
+  const calculatedCtx = rawImages.length > 0 ? 8192 : Math.max(2048, Math.min(8192, estimatedInputTokens + 600));
 
   const body = {
     model,
     prompt,
     system,
-    stream: false,
+    stream: true,
     format: 'json',
-    keep_alive: '20m',
+    keep_alive: '30m',
     options: {
       temperature: 0.1,
       top_p: 0.9,
-      num_predict: 350
+      num_predict: 350,
+      num_ctx: calculatedCtx
     }
   };
   if (rawImages.length > 0) body.images = rawImages;
@@ -801,90 +1436,60 @@ RULES:
     }
     throw new Error(`Ollama HTTP ${res.status}`);
   }
-  const json = await res.json();
-  const parsed = extractJSON(json.response) || {};
 
-  let option = String(parsed.option || parsed.choice || '').trim();
-  let answer = String(parsed.answer || parsed.result || '').trim();
-  const options = Array.isArray(payload.options) ? payload.options : [];
+  let rawOutputText = '';
+  if (res.body && typeof res.body.getReader === 'function') {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let lineBuffer = '';
+    let earlyFound = false;
 
-  if (option) {
-    const optMatch = option.match(/^([A-Za-z0-9]+)[\.\:\)\-]?/);
-    if (optMatch) option = optMatch[1].toUpperCase();
-  }
-  if (option.toUpperCase() === 'UNCERTAIN') option = '';
-  if (answer.toLowerCase().includes('uncertain') || answer.toLowerCase().includes('needs verification') || answer.toLowerCase().includes('cannot determine')) {
-    answer = '';
-  }
-  if (!option && (parsed.reason || parsed.explanation)) {
-    const rMatch = `${parsed.reason || ''} ${parsed.explanation || ''}`.match(/\b(?:option|choice)\s+([A-D])\b/i);
-    if (rMatch) option = rMatch[1].toUpperCase();
-  }
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        lineBuffer += decoder.decode(value, { stream: true });
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() || '';
 
-  if (options.length > 0) {
-    const optUpper = String(option || '').trim().toUpperCase();
-    const ansLower = String(answer || '').trim().toLowerCase();
-
-    let match = null;
-    if (optUpper) {
-      match = options.find(o => String(o.id).toUpperCase() === optUpper);
-      if (!match) {
-        const letterIdx = optUpper.charCodeAt(0) - 65;
-        if (letterIdx >= 0 && letterIdx < options.length) {
-          match = options[letterIdx];
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const chunk = JSON.parse(trimmed);
+            if (chunk.response) {
+              rawOutputText += chunk.response;
+              // Early detection: parse as soon as closing brace is received with option and answer
+              if (!earlyFound && rawOutputText.includes('}') && (rawOutputText.includes('"option"') || rawOutputText.includes('"choice"')) && rawOutputText.includes('"answer"')) {
+                const testParsed = extractJSON(rawOutputText);
+                if (testParsed && (testParsed.option || testParsed.choice) && (testParsed.answer || testParsed.result)) {
+                  if (!isMultiWording || rawOutputText.includes('"reason"') || rawOutputText.includes('"status"')) {
+                    earlyFound = true;
+                    try { reader.cancel(); } catch (_) {}
+                    break;
+                  }
+                }
+              }
+            }
+          } catch (_) {}
         }
+        if (earlyFound) break;
       }
-      if (!match) {
-        match = options.find(o => {
-          const m = String(o.text || '').match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*/);
-          return m && (m[1] || m[2] || m[3]).toUpperCase() === optUpper;
-        });
+    } catch (streamErr) {
+      // If error occurs after answer was already resolved, do not throw
+      if (!earlyFound && !rawOutputText) {
+        throw streamErr;
       }
+    } finally {
+      try { reader.releaseLock(); } catch (_) {}
     }
-
-    if (!match && ansLower) {
-      match = options.find(o => {
-        const raw = String(o.text || '').toLowerCase().trim();
-        const stripped = raw.replace(/^[a-z0-9]+[\.\:\)\-]\s*/i, '').trim();
-        return raw === ansLower || stripped === ansLower ||
-               (ansLower.length > 3 && (raw.includes(ansLower) || ansLower.includes(raw) || stripped.includes(ansLower) || ansLower.includes(stripped)));
-      });
-    }
-
-    if (!match && (parsed.reason || parsed.explanation)) {
-      const rMatch = `${parsed.reason || ''} ${parsed.explanation || ''}`.match(/\b(?:option|choice)\s+([A-D])\b/i);
-      if (rMatch) {
-        const rLetter = rMatch[1].toUpperCase();
-        match = options.find(o => String(o.id).toUpperCase() === rLetter) ||
-                options[rLetter.charCodeAt(0) - 65];
-      }
-    }
-
-    if (match) {
-      const mMatch = String(match.text || '').match(/^(?:(?:\(([A-Za-z0-9]+)\))|(?:\[([A-Za-z0-9]+)\])|([A-Za-z0-9]+)[\.\:\)\-])\s*(.*)$/);
-      const matchIdx = options.indexOf(match);
-      if (mMatch) {
-        option = (mMatch[1] || mMatch[2] || mMatch[3]).toUpperCase();
-        answer = mMatch[4] ? mMatch[4].trim() : match.text;
-      } else {
-        option = String(match.id || String.fromCharCode(65 + matchIdx)).toUpperCase();
-        answer = match.text;
-      }
-    }
+  } else if (typeof res.json === 'function') {
+    const json = await res.json();
+    rawOutputText = json.response || JSON.stringify(json);
   }
-  if (!answer) answer = option ? `Option ${option}` : 'Solution determined';
 
-  return {
-    option,
-    answer,
-    answerText: answer,
-    optionIds: option ? [option] : [],
-    status: 'success',
-    confidence: 0.95,
-    explanation: parsed.reason || `Selected ${option} using local ${model}.`,
-    reason: parsed.reason || `Selected ${option} using local ${model}.`,
-    isDirect: true
-  };
+  const parsed = extractJSON(rawOutputText) || {};
+  return normalizeAnswerPayload(parsed, payload, model, 'ollama');
 }
 
 /**

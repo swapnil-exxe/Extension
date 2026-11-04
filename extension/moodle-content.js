@@ -165,6 +165,14 @@
     return cleaned.join('\n');
   }
 
+  // Regular expression to detect multiple-answer question phrasing
+  const MULTI_ANSWER_REGEX = /\b(select all|choose all|which (?:of the following|of these)?\s+are|which are|all that apply|check all|select multiple|more than one|select each|mark all|select two|select three|select (?:2|3|4)|choose two|choose three|choose (?:2|3|4)|multiple correct|any of the following are|identify all)\b/i;
+
+  function isMultipleAnswerQuestion(questionText = '', hasCheckboxes = false) {
+    if (hasCheckboxes) return true;
+    return MULTI_ANSWER_REGEX.test(questionText || '');
+  }
+
   /**
    * Extract question and options directly from user's highlighted text selection (Mode B)
    */
@@ -224,10 +232,12 @@
         });
 
         console.log('[Moodle AI] Mode B: Both question and options selected from highlight:', { question: questionText, options: options.length });
+        const isMulti = isMultipleAnswerQuestion(questionText, false);
         return {
           platform: 'moodle',
           questionNumber: (questionText.match(/^\d+/) || ['1'])[0],
-          questionType: 'single_choice',
+          questionType: isMulti ? 'multiple_choice' : 'single_choice',
+          isMultiple: isMulti,
           question: questionText,
           options
         };
@@ -248,10 +258,12 @@
           question: containerData.question,
           options: containerData.options.length
         });
+        const isMulti = isMultipleAnswerQuestion(containerData.question, containerData.questionType === 'multiple_choice');
         return {
           platform: 'moodle',
           questionNumber: containerData.questionNumber || '1',
-          questionType: containerData.questionType || 'single_choice',
+          questionType: isMulti ? 'multiple_choice' : (containerData.questionType || 'single_choice'),
+          isMultiple: isMulti,
           question: containerData.question,
           options: containerData.options
         };
@@ -304,10 +316,12 @@
       optionsAttached: pageOptions.length
     });
 
+    const isMulti = isMultipleAnswerQuestion(cleanedText, false);
     return {
       platform: 'moodle',
       questionNumber: (cleanedText.match(/^\d+/) || ['1'])[0],
-      questionType: pageOptions.length > 0 ? 'single_choice' : 'short_answer',
+      questionType: pageOptions.length > 0 ? (isMulti ? 'multiple_choice' : 'single_choice') : 'short_answer',
+      isMultiple: isMulti,
       question: cleanedText,
       options: pageOptions
     };
@@ -1170,6 +1184,7 @@
     }
 
     const hasCheckboxes = questionEl.querySelectorAll('input[type="checkbox"], [role="checkbox"]').length > 0;
+    const isMulti = isMultipleAnswerQuestion(questionText, hasCheckboxes);
     const isTrueFalse = options.length === 2 && options.some(o => /true/i.test(o.text)) && options.some(o => /false/i.test(o.text));
     const isMatching = selects.length > 0 && options.length > 0;
     const isDSA = /\b(time complexity|space complexity|big-o|recurrence|binary search|merge sort|quicksort|dynamic programming|dijkstra|graph|bfs|dfs|heap|tree)\b/i.test(questionText);
@@ -1182,7 +1197,7 @@
       questionType = 'matching';
     } else if (isTrueFalse || questionEl.classList.contains('truefalse')) {
       questionType = 'true_false';
-    } else if (hasCheckboxes) {
+    } else if (isMulti) {
       questionType = 'multiple_choice';
     } else if (isCoding) {
       questionType = 'coding';
@@ -1209,6 +1224,7 @@
       platform: 'moodle',
       questionNumber,
       questionType: isImageOnly ? 'image_based' : questionType,
+      isMultiple: isMulti,
       hasDiagram: diagrams.length > 0,
       hasImage: hasImages,
       isImageBased: isImageOnly,
@@ -1327,9 +1343,9 @@
       return;
     }
 
-    // 5. Duplicate request check (same question just solved)
+    // 5. Duplicate request debounce (same question just solved within 3 seconds)
     const currentQuestionHash = hashString((data.question || '') + (data.options || []).map(o => o.text).join('') + resolvedImages.join(''));
-    if (lastAnswer && lastProcessedQuestionHash === currentQuestionHash && (now - lastSolveRequestTime < 2000)) {
+    if (lastAnswer && lastProcessedQuestionHash === currentQuestionHash && (now - lastSolveRequestTime < 3000)) {
       if (notif) notif.showAnswer(lastAnswer);
       return;
     }
@@ -1344,6 +1360,7 @@
       const payload = {
         platform: 'moodle',
         questionType: data.questionType || (resolvedImages.length > 0 ? 'image_based' : 'single_choice'),
+        isMultiple: Boolean(data.isMultiple),
         question: data.question || (resolvedImages.length > 0 ? 'Solve the question shown in the attached image.' : ''),
         options: data.options || [],
         extractionDurationMs
@@ -1440,6 +1457,9 @@
       }
     } catch (err) {
       if (thisRequestId !== currentRequestId) return;
+      if (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('abort'))) {
+        return; // Normal cancellation of superseded request
+      }
       const isContextInv = err.message && (err.message.includes('context invalidated') || err.message.includes('Extension context'));
       if (isContextInv) {
         console.warn('[Moodle AI] Solve error: Extension context invalidated. Tab reload required.');
@@ -1537,12 +1557,14 @@
       });
 
       let response = null;
+      const isMulti = isMultipleAnswerQuestion(partialText || '', false);
       try {
         response = await chrome.runtime.sendMessage({
           action: 'ANALYZE_QUESTION',
           payload: {
             platform: 'moodle',
-            questionType: 'vision',
+            questionType: isMulti ? 'multiple_choice' : 'vision',
+            isMultiple: isMulti,
             question: partialText || 'Identify the question shown in the selected area and determine the best answer.',
             options: extractedOptions || [],
             image: finalImageUrl
@@ -1597,6 +1619,9 @@
         notif.showAnswer(lastAnswer);
       }
     } catch (err) {
+      if (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('abort'))) {
+        return; // Normal cancellation of superseded request
+      }
       const isContextInv = err.message && (err.message.includes('context invalidated') || err.message.includes('Extension context'));
       if (isContextInv) {
         console.warn('[Moodle AI] Screenshot solve error: Extension context invalidated. Tab reload required.');
@@ -1737,7 +1762,7 @@
       // If message is restricted to top frame only and this is a child frame, ignore
       if (message.topFrameOnly && window !== window.top) {
         sendResponse({ success: true, skippedChildFrame: true });
-        return true;
+        return;
       }
 
       const now = Date.now();
@@ -1746,36 +1771,36 @@
         console.log('[Moodle AI] SHORTCUT_RECEIVED:', { action: message.action, isTopFrame: window === window.top });
         if (now - lastShortcutEventTime < 450) {
           sendResponse({ success: true, debounced: true });
-          return true;
+          return;
         }
         lastShortcutEventTime = now;
         solveCurrentQuestion();
         sendResponse({ success: true });
-        return true;
+        return;
       }
 
       if (message.action === 'TRIGGER_SOLVE_SCREENSHOT') {
         console.log('[Moodle AI] SHORTCUT_RECEIVED:', { action: message.action, isTopFrame: window === window.top });
         if (now - lastShortcutEventTime < 450) {
           sendResponse({ success: true, debounced: true });
-          return true;
+          return;
         }
         lastShortcutEventTime = now;
         solveQuestionScreenshot('', true);
         sendResponse({ success: true });
-        return true;
+        return;
       }
 
       if (message.action === 'TRIGGER_SHOW_LAST_ANSWER') {
         console.log('[Moodle AI] SHORTCUT_RECEIVED:', { action: message.action, isTopFrame: window === window.top });
         if (now - lastShortcutEventTime < 450) {
           sendResponse({ success: true, debounced: true });
-          return true;
+          return;
         }
         lastShortcutEventTime = now;
         showLastAnswerAgain();
         sendResponse({ success: true });
-        return true;
+        return;
       }
 
       if (message.action === 'SETTINGS_UPDATED') {
@@ -1787,7 +1812,7 @@
           notification.setDuration(message.notificationDuration);
         }
         sendResponse({ success: true });
-        return true;
+        return;
       }
     });
   }

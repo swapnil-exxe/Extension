@@ -4,6 +4,20 @@
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Elements - Answer Popup Appearance
+  const inputTextPicker = document.getElementById('input-text-color-picker');
+  const inputTextHex = document.getElementById('input-text-color-hex');
+  const inputBgPicker = document.getElementById('input-bg-color-picker');
+  const inputBgHex = document.getElementById('input-bg-color-hex');
+  const inputBgOpacity = document.getElementById('input-bg-opacity');
+  const inputShowBorder = document.getElementById('input-show-border');
+  const labelOpacityValue = document.getElementById('label-opacity-value');
+  const previewBox = document.getElementById('preview-popup-box');
+  const previewAnswerText = document.getElementById('preview-answer-text');
+  const btnSaveAppearance = document.getElementById('btn-save-appearance');
+  const btnResetAppearance = document.getElementById('btn-reset-appearance');
+  const appearanceStatus = document.getElementById('appearance-status');
+
   // Elements - Notification & Display
   const selectPosition = document.getElementById('select-position');
   const selectDuration = document.getElementById('select-duration');
@@ -13,6 +27,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Elements - Engine Selection
   const selectActiveEngine = document.getElementById('select-active-engine');
+
+  // Elements - Google Gemini Configuration
+  const cardGeminiSettings = document.getElementById('card-gemini-settings');
+  const inputGeminiKey = document.getElementById('input-gemini-key');
+  const btnToggleGeminiKey = document.getElementById('btn-toggle-gemini-key');
+  const selectGeminiModel = document.getElementById('select-gemini-model');
+  const btnTestGemini = document.getElementById('btn-test-gemini');
+  const geminiConnectionStatus = document.getElementById('gemini-connection-status');
+
+  // Elements - OpenAI Configuration
+  const cardOpenAISettings = document.getElementById('card-openai-settings');
+  const inputOpenAIKey = document.getElementById('input-openai-key');
+  const btnToggleOpenAIKey = document.getElementById('btn-toggle-openai-key');
+  const selectOpenAIModel = document.getElementById('select-openai-model');
+  const btnTestOpenAI = document.getElementById('btn-test-openai');
+  const openaiConnectionStatus = document.getElementById('openai-connection-status');
 
   // Elements - Cloud Backend
   const inputBackendUrl = document.getElementById('input-backend-url');
@@ -37,8 +67,43 @@ document.addEventListener('DOMContentLoaded', async () => {
   const infoModelParams = document.getElementById('info-model-params');
   const infoModelQuant = document.getElementById('info-model-quant');
 
+  // Constants & Defaults
+  const DEFAULT_APPEARANCE = {
+    textColor: '#000000',
+    backgroundColor: '#FFFFFF',
+    backgroundOpacity: 100,
+    showBorder: false
+  };
+
+  function sanitizeHex(val, fallback) {
+    if (!val || typeof val !== 'string') return fallback;
+    let clean = val.trim();
+    if (!clean.startsWith('#')) clean = '#' + clean;
+    if (/^#[0-9A-Fa-f]{6}$/.test(clean)) return clean.toUpperCase();
+    if (/^#[0-9A-Fa-f]{3}$/.test(clean)) {
+      return ('#' + clean[1] + clean[1] + clean[2] + clean[2] + clean[3] + clean[3]).toUpperCase();
+    }
+    return fallback;
+  }
+
+  function hexToRgba(hex, opacityPercent = 100) {
+    let cleanHex = (hex || '').replace('#', '').trim();
+    if (cleanHex.length === 3) {
+      cleanHex = cleanHex.split('').map(c => c + c).join('');
+    }
+    if (!/^[0-9A-Fa-f]{6}$/.test(cleanHex)) {
+      cleanHex = 'FFFFFF';
+    }
+    const r = parseInt(cleanHex.substring(0, 2), 16);
+    const g = parseInt(cleanHex.substring(2, 4), 16);
+    const b = parseInt(cleanHex.substring(4, 6), 16);
+    const alpha = Math.max(0, Math.min(100, Number(opacityPercent) || 0)) / 100;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
   // Load preferences from storage
   const settings = await chrome.storage.local.get([
+    'answerPopupAppearance',
     'notificationPosition',
     'notificationDuration',
     'backendUrl',
@@ -46,8 +111,147 @@ document.addEventListener('DOMContentLoaded', async () => {
     'ollamaUrl',
     'ollamaSelectedModel',
     'activeProvider',
+    'geminiApiKey',
+    'geminiSelectedModel',
+    'userGeminiKey',
+    'openaiApiKey',
+    'openaiSelectedModel',
+    'userOpenAIKey',
     'customProviders'
   ]);
+
+  // Initialize Appearance Settings
+  const savedAppearance = Object.assign({}, DEFAULT_APPEARANCE, settings.answerPopupAppearance || {});
+  let currentTextColor = sanitizeHex(savedAppearance.textColor, '#000000');
+  let currentBgColor = sanitizeHex(savedAppearance.backgroundColor, '#FFFFFF');
+  let currentBgOpacity = savedAppearance.backgroundOpacity !== undefined ? Math.max(0, Math.min(100, parseInt(savedAppearance.backgroundOpacity, 10))) : 100;
+  let currentShowBorder = Boolean(savedAppearance.showBorder);
+
+  if (inputTextPicker) inputTextPicker.value = currentTextColor;
+  if (inputTextHex) inputTextHex.value = currentTextColor;
+  if (inputBgPicker) inputBgPicker.value = currentBgColor;
+  if (inputBgHex) inputBgHex.value = currentBgColor;
+  if (inputBgOpacity) inputBgOpacity.value = currentBgOpacity;
+  if (inputShowBorder) inputShowBorder.checked = currentShowBorder;
+
+  function updateLivePreview() {
+    const textVal = sanitizeHex(inputTextHex ? inputTextHex.value : '#000000', '#000000');
+    const bgVal = sanitizeHex(inputBgHex ? inputBgHex.value : '#FFFFFF', '#FFFFFF');
+    const opacityVal = inputBgOpacity ? Math.max(0, Math.min(100, parseInt(inputBgOpacity.value, 10) || 0)) : 100;
+    const borderVal = inputShowBorder ? inputShowBorder.checked : false;
+
+    if (labelOpacityValue) {
+      labelOpacityValue.textContent = opacityVal === 100
+        ? '100% (Fully Opaque)'
+        : opacityVal === 0
+          ? '0% (Fully Transparent)'
+          : `${opacityVal}% (${opacityVal}% Opaque)`;
+    }
+
+    if (previewBox) {
+      previewBox.style.background = hexToRgba(bgVal, opacityVal);
+      if (borderVal) {
+        previewBox.style.border = '1px solid rgba(0, 0, 0, 0.15)';
+        previewBox.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.12)';
+      } else {
+        previewBox.style.border = 'none';
+        previewBox.style.boxShadow = 'none';
+      }
+    }
+
+    if (previewAnswerText) {
+      previewAnswerText.style.color = textVal;
+    }
+  }
+  updateLivePreview();
+
+  // Color & Opacity Event Listeners for Live Preview
+  if (inputTextPicker && inputTextHex) {
+    inputTextPicker.addEventListener('input', () => {
+      inputTextHex.value = inputTextPicker.value.toUpperCase();
+      updateLivePreview();
+    });
+    inputTextHex.addEventListener('input', () => {
+      const sanitized = sanitizeHex(inputTextHex.value, null);
+      if (sanitized) {
+        inputTextPicker.value = sanitized;
+      }
+      updateLivePreview();
+    });
+  }
+
+  if (inputBgPicker && inputBgHex) {
+    inputBgPicker.addEventListener('input', () => {
+      inputBgHex.value = inputBgPicker.value.toUpperCase();
+      updateLivePreview();
+    });
+    inputBgHex.addEventListener('input', () => {
+      const sanitized = sanitizeHex(inputBgHex.value, null);
+      if (sanitized) {
+        inputBgPicker.value = sanitized;
+      }
+      updateLivePreview();
+    });
+  }
+
+  if (inputBgOpacity) {
+    inputBgOpacity.addEventListener('input', updateLivePreview);
+  }
+
+  if (inputShowBorder) {
+    inputShowBorder.addEventListener('change', updateLivePreview);
+  }
+
+  // Appearance - Save Button
+  if (btnSaveAppearance) {
+    btnSaveAppearance.addEventListener('click', async () => {
+      const textVal = sanitizeHex(inputTextHex ? inputTextHex.value : '#000000', '#000000');
+      const bgVal = sanitizeHex(inputBgHex ? inputBgHex.value : '#FFFFFF', '#FFFFFF');
+      const opacityVal = inputBgOpacity ? Math.max(0, Math.min(100, parseInt(inputBgOpacity.value, 10) || 0)) : 100;
+      const borderVal = inputShowBorder ? inputShowBorder.checked : false;
+
+      const appearanceData = {
+        textColor: textVal,
+        backgroundColor: bgVal,
+        backgroundOpacity: opacityVal,
+        showBorder: borderVal
+      };
+
+      await chrome.storage.local.set({ answerPopupAppearance: appearanceData });
+      updateLivePreview();
+
+      if (appearanceStatus) {
+        appearanceStatus.className = 'status-box success';
+        appearanceStatus.textContent = '✅ Answer popup appearance saved successfully!';
+        appearanceStatus.style.display = 'block';
+        setTimeout(() => { appearanceStatus.style.display = 'none'; }, 3500);
+      }
+      showToast('Appearance settings saved!');
+    });
+  }
+
+  // Appearance - Reset to Default Button
+  if (btnResetAppearance) {
+    btnResetAppearance.addEventListener('click', async () => {
+      if (inputTextPicker) inputTextPicker.value = DEFAULT_APPEARANCE.textColor;
+      if (inputTextHex) inputTextHex.value = DEFAULT_APPEARANCE.textColor;
+      if (inputBgPicker) inputBgPicker.value = DEFAULT_APPEARANCE.backgroundColor;
+      if (inputBgHex) inputBgHex.value = DEFAULT_APPEARANCE.backgroundColor;
+      if (inputBgOpacity) inputBgOpacity.value = DEFAULT_APPEARANCE.backgroundOpacity;
+      if (inputShowBorder) inputShowBorder.checked = DEFAULT_APPEARANCE.showBorder;
+
+      await chrome.storage.local.set({ answerPopupAppearance: DEFAULT_APPEARANCE });
+      updateLivePreview();
+
+      if (appearanceStatus) {
+        appearanceStatus.className = 'status-box success';
+        appearanceStatus.textContent = '✅ Answer popup appearance reset to default style.';
+        appearanceStatus.style.display = 'block';
+        setTimeout(() => { appearanceStatus.style.display = 'none'; }, 3500);
+      }
+      showToast('Appearance reset to default');
+    });
+  }
 
   if (settings.notificationPosition) {
     selectPosition.value = settings.notificationPosition;
@@ -67,9 +271,51 @@ document.addEventListener('DOMContentLoaded', async () => {
   inputLocalBackendUrl.value = rawLocalBackend.includes('11434') ? 'http://127.0.0.1:3000' : rawLocalBackend;
   inputOllamaUrl.value = settings.ollamaUrl || 'http://127.0.0.1:11434';
 
-  // Active Provider Engine (Cloud vs Ollama)
-  const isOllamaActive = settings.activeProvider === 'ollama';
-  selectActiveEngine.value = isOllamaActive ? 'ollama' : 'cloud';
+  // Initialize Google Gemini settings
+  if (inputGeminiKey) {
+    inputGeminiKey.value = settings.geminiApiKey || settings.userGeminiKey || '';
+  }
+  if (selectGeminiModel) {
+    selectGeminiModel.value = settings.geminiSelectedModel || 'gemini-2.5-flash';
+  }
+
+  // Initialize OpenAI settings
+  if (inputOpenAIKey) {
+    inputOpenAIKey.value = settings.openaiApiKey || settings.userOpenAIKey || '';
+  }
+  if (selectOpenAIModel) {
+    selectOpenAIModel.value = settings.openaiSelectedModel || 'gpt-4o-mini';
+  }
+
+  // Active Provider Engine (Gemini vs OpenAI vs Ollama)
+  let currentActive = (settings.activeProvider || 'gemini').toLowerCase();
+  if (currentActive.startsWith('gemini') || currentActive === 'cloud') currentActive = 'gemini';
+  if (currentActive === 'chatgpt' || currentActive === 'openai') currentActive = 'openai';
+  if (currentActive === 'ollama') currentActive = 'ollama';
+
+  selectActiveEngine.value = currentActive;
+
+  function updateProviderCardsVisibility() {
+    const val = selectActiveEngine.value;
+    if (cardGeminiSettings) cardGeminiSettings.style.display = val === 'gemini' ? 'block' : 'none';
+    if (cardOpenAISettings) cardOpenAISettings.style.display = val === 'openai' ? 'block' : 'none';
+    const cardOllama = document.getElementById('card-ollama-settings');
+    if (cardOllama) cardOllama.style.display = val === 'ollama' ? 'block' : 'none';
+  }
+  updateProviderCardsVisibility();
+  selectActiveEngine.addEventListener('change', updateProviderCardsVisibility);
+
+  // Toggle API key visibility buttons
+  if (btnToggleGeminiKey && inputGeminiKey) {
+    btnToggleGeminiKey.addEventListener('click', () => {
+      inputGeminiKey.type = inputGeminiKey.type === 'password' ? 'text' : 'password';
+    });
+  }
+  if (btnToggleOpenAIKey && inputOpenAIKey) {
+    btnToggleOpenAIKey.addEventListener('click', () => {
+      inputOpenAIKey.type = inputOpenAIKey.type === 'password' ? 'text' : 'password';
+    });
+  }
 
   let currentInstalledModels = [];
   let savedModelIdentifier = settings.ollamaSelectedModel || '';
@@ -246,7 +492,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast(`Refreshed: ${currentInstalledModels.length} models detected!`);
       }
     } catch (err) {
-      console.warn('[Ollama Settings] Model refresh error:', err.message);
+      console.info('[Ollama Settings] Ollama local service not reachable:', err.message);
       ollamaModelWarning.style.display = 'block';
       ollamaModelWarning.innerHTML = `❌ <strong>Cannot list models:</strong> ${err.message}<br><small>Make sure Ollama is running at <code>${ollamaHost}</code>.</small>`;
       selectOllamaModel.innerHTML = '<option value="">Ollama offline or not running</option>';
@@ -371,6 +617,68 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Test Gemini Connection Button
+  if (btnTestGemini) {
+    btnTestGemini.addEventListener('click', async () => {
+      const key = (inputGeminiKey ? inputGeminiKey.value : '').trim();
+      const model = selectGeminiModel ? selectGeminiModel.value : 'gemini-2.5-flash';
+      if (!key) {
+        geminiConnectionStatus.className = 'status-box error';
+        geminiConnectionStatus.textContent = '❌ Please enter a Google Gemini API key first.';
+        geminiConnectionStatus.style.display = 'block';
+        return;
+      }
+      geminiConnectionStatus.className = 'status-box';
+      geminiConnectionStatus.textContent = 'Testing connection to official Google Gemini API...';
+      geminiConnectionStatus.style.display = 'block';
+
+      const res = await sendExtensionMessage({
+        action: 'TEST_GEMINI_CONNECTION',
+        apiKey: key,
+        model
+      }, 15000);
+
+      if (res && res.ok) {
+        geminiConnectionStatus.className = 'status-box success';
+        geminiConnectionStatus.textContent = `✅ ${res.message}`;
+      } else {
+        geminiConnectionStatus.className = 'status-box error';
+        geminiConnectionStatus.textContent = `❌ ${res ? res.error : 'Connection failed'}`;
+      }
+    });
+  }
+
+  // Test OpenAI Connection Button
+  if (btnTestOpenAI) {
+    btnTestOpenAI.addEventListener('click', async () => {
+      const key = (inputOpenAIKey ? inputOpenAIKey.value : '').trim();
+      const model = selectOpenAIModel ? selectOpenAIModel.value : 'gpt-4o-mini';
+      if (!key) {
+        openaiConnectionStatus.className = 'status-box error';
+        openaiConnectionStatus.textContent = '❌ Please enter an OpenAI API key first.';
+        openaiConnectionStatus.style.display = 'block';
+        return;
+      }
+      openaiConnectionStatus.className = 'status-box';
+      openaiConnectionStatus.textContent = 'Testing connection to official OpenAI API...';
+      openaiConnectionStatus.style.display = 'block';
+
+      const res = await sendExtensionMessage({
+        action: 'TEST_OPENAI_CONNECTION',
+        apiKey: key,
+        model
+      }, 15000);
+
+      if (res && res.ok) {
+        openaiConnectionStatus.className = 'status-box success';
+        openaiConnectionStatus.textContent = `✅ ${res.message}`;
+      } else {
+        openaiConnectionStatus.className = 'status-box error';
+        openaiConnectionStatus.textContent = `❌ ${res ? res.error : 'Connection failed'}`;
+      }
+    });
+  }
+
   // Clear cache button
   btnClearCache.addEventListener('click', () => {
     const testUrl = inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com';
@@ -385,28 +693,36 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Save settings button
   btnSave.addEventListener('click', async () => {
-    const chosenEngine = selectActiveEngine.value;
-    const currentStorage = await chrome.storage.local.get(['activeProvider']);
-
-    let finalActiveProvider = currentStorage.activeProvider || 'gemini_1';
-    if (chosenEngine === 'ollama') {
-      finalActiveProvider = 'ollama';
-    } else if (finalActiveProvider === 'ollama') {
-      // Reverting to cloud
-      finalActiveProvider = 'gemini_1';
-    }
+    const chosenProvider = selectActiveEngine.value;
+    const geminiKey = (inputGeminiKey ? inputGeminiKey.value : '').trim();
+    const geminiModel = selectGeminiModel ? selectGeminiModel.value : 'gemini-2.5-flash';
+    const openaiKey = (inputOpenAIKey ? inputOpenAIKey.value : '').trim();
+    const openaiModel = selectOpenAIModel ? selectOpenAIModel.value : 'gpt-4o-mini';
 
     const updated = {
+      answerPopupAppearance: {
+        textColor: sanitizeHex(inputTextHex ? inputTextHex.value : '#000000', '#000000'),
+        backgroundColor: sanitizeHex(inputBgHex ? inputBgHex.value : '#FFFFFF', '#FFFFFF'),
+        backgroundOpacity: inputBgOpacity ? Math.max(0, Math.min(100, parseInt(inputBgOpacity.value, 10) || 0)) : 100,
+        showBorder: inputShowBorder ? inputShowBorder.checked : false
+      },
       notificationPosition: selectPosition.value,
       notificationDuration: parseInt(selectDuration.value, 10),
       backendUrl: inputBackendUrl.value.trim() || 'https://extension-w1ac.onrender.com',
       localBackendUrl: inputLocalBackendUrl.value.trim() || 'http://127.0.0.1:3000',
       ollamaUrl: inputOllamaUrl.value.trim() || 'http://127.0.0.1:11434',
       ollamaSelectedModel: selectOllamaModel.value || savedModelIdentifier,
-      activeProvider: finalActiveProvider
+      activeProvider: chosenProvider,
+      geminiApiKey: geminiKey,
+      geminiSelectedModel: geminiModel,
+      userGeminiKey: geminiKey,
+      openaiApiKey: openaiKey,
+      openaiSelectedModel: openaiModel,
+      userOpenAIKey: openaiKey
     };
 
     await chrome.storage.local.set(updated);
+    updateLivePreview();
 
     // Broadcast to open tabs
     const tabs = await chrome.tabs.query({});

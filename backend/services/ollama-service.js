@@ -167,11 +167,23 @@ export async function checkOllamaStatus(ollamaUrl, timeoutMs = 4000) {
   }
 }
 
+// In-memory cache for installed models to avoid repeated /api/tags network calls
+const installedModelsCache = new Map();
+const MODELS_CACHE_TTL_MS = 30000;
+
 /**
  * Fetch and format all models installed in Ollama directly from /api/tags
  */
 export async function getInstalledModels(ollamaUrl, timeoutMs = 5000) {
   const baseUrl = getOllamaUrl(ollamaUrl);
+  const now = Date.now();
+  if (process.env.NODE_ENV !== 'test') {
+    const cached = installedModelsCache.get(baseUrl);
+    if (cached && (now - cached.timestamp < MODELS_CACHE_TTL_MS)) {
+      return cached.data;
+    }
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -207,13 +219,16 @@ export async function getInstalledModels(ollamaUrl, timeoutMs = 5000) {
       };
     });
 
-    return {
+    const result = {
       ok: true,
       url: baseUrl,
       models,
       count: models.length,
       message: models.length === 0 ? 'No local models found. Install one using ollama pull MODEL_NAME.' : null
     };
+
+    installedModelsCache.set(baseUrl, { data: result, timestamp: now });
+    return result;
   } catch (err) {
     clearTimeout(timer);
     let msg = err.message;
@@ -585,6 +600,9 @@ export async function callOllama(payload, options = {}) {
   const prompt = buildOllamaPrompt({ ...payload, hasImage }, domain);
   const system = buildSystemPrompt(domain);
 
+  const estimatedInputTokens = Math.ceil((prompt.length + system.length) / 3);
+  const dynamicCtx = rawImages.length > 0 ? 8192 : Math.max(2048, Math.min(8192, estimatedInputTokens + 600));
+
   // Optimized inference options for fast, deterministic local generation
   const requestBody = {
     model: modelIdentifier,
@@ -592,13 +610,13 @@ export async function callOllama(payload, options = {}) {
     system,
     stream: false,
     format: 'json',
-    keep_alive: '20m', // Keep model resident in memory to eliminate cold start latency
+    keep_alive: '30m', // Keep model resident in memory to eliminate cold start latency
     options: {
       temperature: 0.1, // Near-greedy decoding for academic precision
       top_p: 0.9,
       top_k: 40,
-      num_predict: 350, // Compact response length prevents stalling
-      num_ctx: 4096
+      num_predict: 350, // Adequate response length prevents truncated JSON
+      num_ctx: dynamicCtx
     }
   };
 

@@ -8,6 +8,21 @@
 
   const isTopFrame = (window === window.top);
 
+  function hexToRgba(hex, opacityPercent = 100) {
+    let cleanHex = (hex || '').replace('#', '').trim();
+    if (cleanHex.length === 3) {
+      cleanHex = cleanHex.split('').map(c => c + c).join('');
+    }
+    if (!/^[0-9A-Fa-f]{6}$/.test(cleanHex)) {
+      cleanHex = 'FFFFFF';
+    }
+    const r = parseInt(cleanHex.substring(0, 2), 16);
+    const g = parseInt(cleanHex.substring(2, 4), 16);
+    const b = parseInt(cleanHex.substring(4, 6), 16);
+    const alpha = Math.max(0, Math.min(100, opacityPercent !== undefined ? Number(opacityPercent) : 100)) / 100;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
   class QuickNotification {
     constructor() {
       this.container = null;
@@ -17,6 +32,12 @@
       this.timerId = null;
       this.currentDurationMs = 500; // 0.5s default for ultra-fast glance
       this.currentPosition = 'top-right';
+      this.appearance = {
+        textColor: '#000000',
+        backgroundColor: '#FFFFFF',
+        backgroundOpacity: 100,
+        showBorder: false
+      };
       this.chunks = [];
       this.currentChunkIndex = 0;
       this.fullText = '';
@@ -42,15 +63,38 @@
     async init() {
       try {
         if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-          const settings = await chrome.storage.local.get(['notificationPosition', 'notificationDuration']);
+          const settings = await chrome.storage.local.get(['notificationPosition', 'notificationDuration', 'answerPopupAppearance']);
           if (settings.notificationPosition) {
             this.currentPosition = settings.notificationPosition;
           }
           if (settings.notificationDuration !== undefined) {
             this.currentDurationMs = parseInt(settings.notificationDuration, 10) || 500;
           }
+          if (settings.answerPopupAppearance) {
+            this.appearance = Object.assign({}, this.appearance, settings.answerPopupAppearance);
+          }
         }
       } catch (_) {}
+
+      // Listen for appearance and notification settings updates
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+        chrome.storage.onChanged.addListener((changes, area) => {
+          if (area === 'local') {
+            if (changes.answerPopupAppearance) {
+              this.appearance = Object.assign({}, this.appearance, changes.answerPopupAppearance.newValue || {});
+              if (this.box && this.box.classList.contains('visible') && !this.box.classList.contains('status')) {
+                this.render();
+              }
+            }
+            if (changes.notificationPosition && changes.notificationPosition.newValue) {
+              this.setPosition(changes.notificationPosition.newValue);
+            }
+            if (changes.notificationDuration && changes.notificationDuration.newValue !== undefined) {
+              this.setDuration(changes.notificationDuration.newValue);
+            }
+          }
+        });
+      }
 
       if (isTopFrame) {
         this.ensureDOM();
@@ -179,8 +223,8 @@
           display: none !important;
           background: #FFFFFF !important;
           color: #000000 !important;
-          border: 1px solid #E5E5E5 !important;
-          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12) !important;
+          border: none !important;
+          box-shadow: none !important;
           border-radius: 6px !important;
           padding: 6px 10px !important;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
@@ -197,6 +241,9 @@
           visibility: visible !important;
           transition: opacity 0.15s ease, transform 0.15s ease !important;
         }
+        .quick-notify-box.bordered {
+          border: 1px solid #E5E5E5 !important;
+        }
         .quick-notify-box.visible {
           display: inline-block !important;
           opacity: 1 !important;
@@ -205,7 +252,7 @@
         .quick-notify-box.status {
           background: #FFFFFF !important;
           color: #000000 !important;
-          border: 1px solid #E5E5E5 !important;
+          border: none !important;
           font-weight: 500 !important;
           font-size: 13px !important;
           padding: 6px 12px !important;
@@ -213,7 +260,7 @@
         .quick-notify-box.error {
           background: #FFFFFF !important;
           color: #991B1B !important;
-          border: 1px solid #E5E5E5 !important;
+          border: none !important;
           font-weight: 600 !important;
           font-size: 12px !important;
         }
@@ -255,9 +302,9 @@
           justify-content: center !important;
           margin-left: 6px !important;
           padding: 0 4px !important;
-          background: #F3F4F6 !important;
+          background: transparent !important;
           color: #4B5563 !important;
-          border: 1px solid #E5E5E5 !important;
+          border: none !important;
           border-radius: 4px !important;
           font-size: 13px !important;
           font-weight: 800 !important;
@@ -411,12 +458,41 @@
       this.ensureDOM();
       this.clearTimer();
 
-      const { option, answer, reason, explanation, isOllama, provider, source, model } = payload || {};
+      const { option, answer, reason, explanation, isOllama, provider, source, model, isMultiple, optionIds, options } = payload || {};
       let text = '';
       const hasRealOption = option && String(option).trim() && String(option).toUpperCase() !== 'UNCERTAIN';
       const hasRealAnswer = answer && String(answer).trim() && !String(answer).toUpperCase().startsWith('UNCERTAIN');
 
-      if (hasRealOption && hasRealAnswer) {
+      const isMulti = Boolean(
+        isMultiple ||
+        (Array.isArray(optionIds) && optionIds.length > 1) ||
+        (Array.isArray(options) && options.length > 1) ||
+        (typeof option === 'string' && option.includes(','))
+      );
+
+      if (isMulti) {
+        if (hasRealAnswer) {
+          const cleanAnswer = String(answer).trim();
+          if (cleanAnswer.startsWith('MULTIPLE ANSWER')) {
+            text = cleanAnswer;
+          } else {
+            text = `MULTIPLE ANSWER\n\n${cleanAnswer}`;
+          }
+        } else if (hasRealOption) {
+          text = `MULTIPLE ANSWER\n\n${option}`;
+        } else {
+          text = 'MULTIPLE ANSWER\n\nMultiple Solutions Determined';
+        }
+
+        let cleanExp = (reason || explanation || '').trim();
+        if (cleanExp.startsWith('MULTIPLE ANSWER')) {
+          const expParts = cleanExp.split(/Explanation:\s*/i);
+          if (expParts.length > 1) {
+            cleanExp = expParts[1].trim();
+          }
+        }
+        this.explanationText = cleanExp ? (cleanExp.toLowerCase().startsWith('explanation') ? cleanExp : `Explanation:\n${cleanExp}`) : 'Verified multiple-answer solution determined.';
+      } else if (hasRealOption && hasRealAnswer) {
         const optLetter = String(option).trim();
         let cleanAnswer = String(answer).trim();
         const prefixRegex = new RegExp(`^${optLetter}[\\.\\:\\)\\-]\\s*`, 'i');
@@ -424,16 +500,19 @@
           cleanAnswer = cleanAnswer.replace(prefixRegex, '').trim();
         }
         text = `${optLetter} — ${cleanAnswer}`;
+        this.explanationText = (reason || explanation || '').trim();
       } else if (hasRealAnswer) {
         text = String(answer).trim();
+        this.explanationText = (reason || explanation || '').trim();
       } else if (hasRealOption) {
         text = String(option).trim();
+        this.explanationText = (reason || explanation || '').trim();
       } else {
         text = 'Verified Solution Determined';
+        this.explanationText = (reason || explanation || '').trim();
       }
 
       this.fullText = text;
-      this.explanationText = (reason || explanation || '').trim();
       this.isOllama = Boolean(
         isOllama ||
         provider === 'ollama' ||
@@ -482,6 +561,20 @@
       this.box.className = 'quick-notify-box visible';
       this.box.innerHTML = '';
 
+      const bgColor = this.appearance?.backgroundColor || '#FFFFFF';
+      const bgOpacity = this.appearance?.backgroundOpacity !== undefined ? this.appearance.backgroundOpacity : 100;
+      const textColor = this.appearance?.textColor || '#000000';
+      const showBorder = Boolean(this.appearance?.showBorder);
+
+      this.box.style.setProperty('background', hexToRgba(bgColor, bgOpacity), 'important');
+      if (showBorder) {
+        this.box.style.setProperty('border', '1px solid rgba(0, 0, 0, 0.15)', 'important');
+        this.box.style.setProperty('box-shadow', '0 4px 14px rgba(0, 0, 0, 0.12)', 'important');
+      } else {
+        this.box.style.setProperty('border', 'none', 'important');
+        this.box.style.setProperty('box-shadow', 'none', 'important');
+      }
+
       // 1. Answer row: compact line [Option — Answer Text] [🦙] [⋮]
       const row = document.createElement('div');
       row.className = 'answer-row';
@@ -489,6 +582,7 @@
       const answerSpan = document.createElement('span');
       answerSpan.className = 'answer-text';
       answerSpan.textContent = this.fullText;
+      answerSpan.style.setProperty('color', textColor, 'important');
       row.appendChild(answerSpan);
 
       // 2. Ollama 🦙 badge: rendered only when local Ollama provided the answer
@@ -522,7 +616,7 @@
         const explDiv = document.createElement('div');
         explDiv.className = 'answer-explanation';
         let rawExpl = this.explanationText || 'Verified solution determined.';
-        if (!/^explanation\s*:/i.test(rawExpl)) {
+        if (!/^explanation\s*:/i.test(rawExpl) && !rawExpl.startsWith('MULTIPLE ANSWER')) {
           rawExpl = `Explanation: ${rawExpl}`;
         }
         explDiv.textContent = rawExpl;
@@ -567,11 +661,25 @@
         this.box.className = 'quick-notify-box visible status';
         this.box.title = 'Processing question';
 
+        const bgColor = this.appearance?.backgroundColor || '#FFFFFF';
+        const bgOpacity = this.appearance?.backgroundOpacity !== undefined ? this.appearance.backgroundOpacity : 100;
+        const textColor = this.appearance?.textColor || '#000000';
+        const showBorder = Boolean(this.appearance?.showBorder);
+        this.box.style.setProperty('background', hexToRgba(bgColor, bgOpacity), 'important');
+        if (showBorder) {
+          this.box.style.setProperty('border', '1px solid rgba(0, 0, 0, 0.15)', 'important');
+          this.box.style.setProperty('box-shadow', '0 4px 14px rgba(0, 0, 0, 0.12)', 'important');
+        } else {
+          this.box.style.setProperty('border', 'none', 'important');
+          this.box.style.setProperty('box-shadow', 'none', 'important');
+        }
+
         const isSolving = !msg || /solving|quick\s*ai/i.test(msg) || msg === '•' || msg === '•••';
         if (isSolving) {
-          this.box.innerHTML = '<span class="loading-dot" aria-label="Loading">•</span>';
+          this.box.innerHTML = `<span class="loading-dot" aria-label="Loading" style="color: ${textColor} !important;">•</span>`;
         } else {
           this.box.textContent = msg;
+          this.box.style.setProperty('color', textColor, 'important');
         }
 
         this.timerId = setTimeout(() => this.hide(), 45000);
@@ -657,6 +765,10 @@
       if (this.box) {
         this.box.className = 'quick-notify-box';
         this.box.textContent = '';
+        this.box.style.removeProperty('background');
+        this.box.style.removeProperty('border');
+        this.box.style.removeProperty('border-color');
+        this.box.style.removeProperty('box-shadow');
       }
       if (this.host) {
         this.host.style.setProperty('display', 'none', 'important');
