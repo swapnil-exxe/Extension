@@ -204,10 +204,11 @@
         }
         .quick-notify-box.status {
           background: #FFFFFF !important;
-          color: #555555 !important;
+          color: #000000 !important;
           border: 1px solid #E5E5E5 !important;
           font-weight: 500 !important;
-          font-size: 12px !important;
+          font-size: 13px !important;
+          padding: 6px 12px !important;
         }
         .quick-notify-box.error {
           background: #FFFFFF !important;
@@ -215,6 +216,15 @@
           border: 1px solid #E5E5E5 !important;
           font-weight: 600 !important;
           font-size: 12px !important;
+        }
+        .loading-dot {
+          display: inline-block !important;
+          font-size: 14px !important;
+          line-height: 1 !important;
+          color: #000000 !important;
+          padding: 1px 4px !important;
+          user-select: none !important;
+          vertical-align: middle !important;
         }
         .answer-row {
           display: inline-flex !important;
@@ -277,41 +287,6 @@
           word-break: break-word !important;
           cursor: text !important;
           user-select: text !important;
-        }
-        @media (prefers-color-scheme: dark) {
-          .quick-notify-box {
-            background: #1E1E1E !important;
-            color: #F9FAFB !important;
-            border-color: #374151 !important;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45) !important;
-          }
-          .answer-text {
-            color: #F9FAFB !important;
-          }
-          .quick-notify-box.status {
-            background: #1E1E1E !important;
-            color: #9CA3AF !important;
-            border-color: #374151 !important;
-          }
-          .quick-notify-box.error {
-            background: #1E1E1E !important;
-            color: #F87171 !important;
-            border-color: #7F1D1D !important;
-          }
-          .answer-explanation {
-            border-top-color: #374151 !important;
-            color: #9CA3AF !important;
-          }
-          .more-dots-btn {
-            background: #2D3748 !important;
-            color: #E2E8F0 !important;
-            border-color: #4B5563 !important;
-          }
-          .more-dots-btn:hover {
-            background: #374151 !important;
-            color: #FFFFFF !important;
-            border-color: #6B7280 !important;
-          }
         }
       `;
       shadow.appendChild(style);
@@ -590,8 +565,15 @@
       }
       if (this.box) {
         this.box.className = 'quick-notify-box visible status';
-        this.box.textContent = msg || 'Quick AI — Solving question...';
         this.box.title = 'Processing question';
+
+        const isSolving = !msg || /solving|quick\s*ai/i.test(msg) || msg === '•' || msg === '•••';
+        if (isSolving) {
+          this.box.innerHTML = '<span class="loading-dot" aria-label="Loading">•</span>';
+        } else {
+          this.box.textContent = msg;
+        }
+
         this.timerId = setTimeout(() => this.hide(), 45000);
       }
 
