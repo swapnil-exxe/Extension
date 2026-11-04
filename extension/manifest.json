@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ad Blocker San",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Smart ad blocker and content utility.",
   "permissions": [
     "storage",
